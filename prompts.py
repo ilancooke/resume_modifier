@@ -11,56 +11,51 @@ You must follow these rules:
 
 FACTUALITY:
 - Preserve factual accuracy.
-- Do not invent or hallucinate experience, technologies, scope, metrics, titles, employers, or dates.
-- Rewrite only wording and ordering.
+- Do not invent or hallucinate experience, technologies, scope, metrics, titles, employers, dates, ownership, or outcomes.
+- All rewritten content must remain grounded in the original resume.
 
 STRUCTURE:
 - Keep the same number of experiences as the input.
 - Keep the same number of bullets for each experience as the input.
+- Do NOT drop, combine, split, or add bullets.
 - Echo each experience's company and role exactly as provided.
 - `bullet_order` must be a zero-based permutation of the original bullet indexes for that experience.
+- The summary may be substantially rewritten, but it must remain factually grounded in the resume.
 
-CRITICAL WRITING REQUIREMENTS:
+WRITING QUALITY:
+- Preserve important technical specificity, including:
+  - features, signals, and data sources
+  - modeling techniques and constraints
+  - system design details
+  - scale, metrics, and business outcomes
+- Do NOT replace concrete details with generic filler.
+- Do NOT make superficial wording changes just to appear rewritten.
+- Some bullets may remain mostly unchanged if they are already strong and relevant.
+- At least 2 bullets in the most relevant experience must be materially reframed.
+- Materially reframed means the emphasis and value proposition clearly change, not just a few words.
+- Reduce redundancy across bullets when possible.
+- Different bullets should emphasize different aspects of the work rather than repeating the same model-building pattern.
+- You may tighten wording for clarity, but do not remove important technical or business detail.
 
-1. PRESERVE TECHNICAL SPECIFICITY (VERY IMPORTANT)
-- Do NOT replace specific technical details with generic phrases.
-- Always retain:
-  - specific features (e.g., "graph-based relational features", "device signals")
-  - modeling techniques (e.g., "class imbalance", "threshold calibration")
-  - system design details (e.g., "low-latency inference", "multi-stage pipeline")
-- Prefer detailed phrasing over abstract summaries.
+STYLE:
+- Use strong but accurate action verbs such as: Owned, Built, Designed, Developed, Deployed, Implemented.
+- Do not introduce stronger leadership claims than supported by the original resume.
+- Do not use the em dash character (—).
 
-2. INCREASE ROLE ALIGNMENT
-- Explicitly incorporate language from the job description where appropriate.
-- Emphasize:
-  - model lifecycle ownership
-  - governance, monitoring, and documentation
-  - risk and decisioning systems
-- Make alignment visible early in each bullet when possible.
-
-3. MAINTAIN DENSITY
-- Do not shorten bullets.
-- Avoid generic phrases such as:
-  - "developed scalable solutions"
-  - "leveraged advanced techniques"
-- Each bullet should retain as much concrete detail as the original.
-
-4. AUGMENT, DO NOT REPLACE
-- When adding job-relevant language (e.g., governance, risk), layer it onto existing technical content.
-- Do not remove or dilute technical depth to make room for generic alignment language.
-
-5. STRONG ACTION VERBS
-- Prefer "Owned", "Built", "Developed", "Deployed", "Designed"
-- Avoid overstating leadership (do not introduce "Led" unless clearly supported by the original text)
-
-GOAL:
-Produce bullets that are BOTH:
-- highly aligned to the job description
-- as technically rich and specific as the original resume
+OUTPUT GOAL:
+Produce a resume that is more relevant to the target role because the most important matching signals are clearer and more prominent, not because job-description keywords were mechanically inserted.
 
 TRACKER EXTRACTION:
-- Also extract job tracker metadata from the job description.
-- If a tracker field is not available in the job description, return "unknown".
+- Extract:
+  - company_name
+  - role_title
+  - location
+  - job_id
+  - ds_role_type
+  - alignment_strength_comment
+  - salary_range
+- Use only information grounded in the job description and resume.
+- If a field is not available, return "unknown".
 - `ds_role_type` must be exactly one of:
   - Product / Experimentation DS
   - Applied ML
@@ -69,8 +64,7 @@ TRACKER EXTRACTION:
   - AI / LLM / Agentic
   - Analytics / BI
   - Other
-- `alignment_strength_comment` must be one honest sentence about how strongly the role aligns with the candidate's background based on the resume and job description.
-- For `location`, if the job description mentions remote or hybrid, include that wording in the location value.
+- `alignment_strength_comment` must be one concise, honest sentence.
 """
 
 
@@ -81,38 +75,64 @@ def build_user_prompt(*, full_resume_text: str, editable_resume: dict[str, Any],
 
     return f"""Tailor the editable resume content to the job description.
 
-QUALITY REQUIREMENTS:
-- Preserve all important technical details from the original bullets.
-- Do NOT generalize or simplify technical language.
-- Rewrite bullets to improve alignment, not to reduce detail.
-- If a bullet contains specific signals (features, models, constraints), those must remain.
-- Prefer adding relevant language (risk, governance, lifecycle) to existing bullets rather than replacing technical content.
+This is a signal-prioritization task, not a keyword-matching task.
 
-STYLE TARGET:
-- The output should read like a senior individual contributor in a regulated risk modeling or data science environment.
-- Balance:
-  - technical depth (from the base resume)
-  - governance and risk framing (from the job description)
+Follow this process:
 
-EDITING RULES:
-- Rewrite the summary.
-- Rewrite each bullet, but keep the bullet count unchanged within each role.
-- Return all experiences in the same order they appear below.
-- Echo `company` and `role` exactly as provided.
-- `bullet_order` must reference the rewritten bullets using zero-based indexes.
+1. Identify the 3 to 5 most important signals in the job description.
+2. Find the strongest evidence for those signals in the resume.
+3. Rewrite and reorder bullets so those signals appear earlier and more clearly.
 
-TRACKER RULES:
-- Extract:
-  - company_name
-  - role_title
-  - location
-  - job_id
-  - ds_role_type
-  - alignment_strength_comment
-  - salary_range
-- Use only information grounded in the job description and resume.
-- If missing from the job description, return "unknown".
-- `alignment_strength_comment` should be concise, direct, and honest.
+Task requirements:
+- Keep the same number of bullets per role.
+- Do not drop, combine, split, or add bullets.
+- Reorder bullets when needed.
+- Do not keep the original order by default.
+- The first 2 to 3 bullets in the most relevant experience should reflect the strongest match to the role.
+- The first bullet in the most relevant experience should emphasize the most relevant signal for the role.
+- At least 2 bullets in the most relevant experience must be materially reframed.
+- Prefer stronger framing around decisions enabled, business impact, tradeoffs, experimentation, analytics, or system outcomes when supported by the resume.
+- Avoid repeating the same “built model / deployed model / monitored model” framing across multiple bullets.
+
+Role-specific prioritization:
+- For Product / Experimentation DS roles, prioritize:
+  - experimentation and causal analysis
+  - large-scale data analysis
+  - decision-making and business impact
+  - stakeholder influence
+- For Applied ML roles, prioritize:
+  - modeling challenges
+  - features and constraints
+  - evaluation and performance
+  - production systems
+- For AI / LLM / Agentic roles, prioritize:
+  - evaluation design
+  - orchestration
+  - prompt or model iteration
+  - validation and reliability
+- For Analytics / BI roles, prioritize:
+  - SQL and analysis
+  - dashboards and reporting
+  - KPI design
+  - root-cause analysis
+  - decision support
+
+Final self-check before answering:
+- Are the most important role signals visible in the summary and top bullets?
+- Were at least 2 bullets in the most relevant experience materially reframed?
+- Does the output feel meaningfully more tailored, rather than lightly reworded?
+- Is the bullet order helping the resume fit this role better?
+
+Return a JSON object with:
+- `summary`
+- `experiences`
+- `tracker`
+
+Each item in `experiences` must contain:
+- `company`
+- `role`
+- `bullet_order`
+- `bullets`
 
 Base resume text for context:
 {full_resume_text}

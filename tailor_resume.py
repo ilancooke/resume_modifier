@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import argparse
 import logging
-import re
 import shutil
 import sys
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -148,19 +146,16 @@ def derive_output_paths(*, base_dir: Path, metadata: RoleMetadata) -> tuple[Path
 
 def extract_role_metadata(*, structure, job_description: str) -> RoleMetadata:
     candidate_slug = extract_candidate_slug(structure)
-    company_slug = extract_company_slug(job_description)
-    role_number_slug = extract_role_number_slug(job_description)
     return RoleMetadata(
         candidate_slug=candidate_slug,
-        company_slug=company_slug,
-        role_number_slug=role_number_slug,
+        company_slug="unknown",
+        role_number_slug="unknown",
     )
 
 
 def enrich_role_metadata(*, metadata: RoleMetadata, tailoring: TailoredResume) -> RoleMetadata:
-    company_slug = metadata.company_slug
-    if company_slug == "unknown":
-        company_slug = slugify(tailoring.tracker.company_name)
+    tracker_company_slug = slugify(tailoring.tracker.company_name)
+    company_slug = tracker_company_slug if tracker_company_slug != "unknown" else metadata.company_slug
 
     role_number_slug = metadata.role_number_slug
     if role_number_slug == "unknown":
@@ -185,41 +180,24 @@ def extract_candidate_slug(structure) -> str:
     return slugify(structure.path.stem)
 
 
-def extract_company_slug(job_description: str) -> str:
-    patterns = [
-        r"(?im)^\s*company\s*:\s*(?P<value>.+?)\s*$",
-        r"(?im)^\s*company name\s*:\s*(?P<value>.+?)\s*$",
-        r"(?im)^\s*employer\s*:\s*(?P<value>.+?)\s*$",
-        r"(?im)^\s*organization\s*:\s*(?P<value>.+?)\s*$",
-        r"(?im)\b(?P<value>[A-Z][A-Za-z0-9&.,'()-]{1,60})[’']s\b",
-        r"(?im)^\s*at\s+(?P<value>[A-Z][A-Za-z0-9&.,'()\\-/ ]{1,60})\s*$",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, job_description)
-        if match:
-            return slugify(match.group("value"))
-    return "unknown"
-
-
-def extract_role_number_slug(job_description: str) -> str:
-    patterns = [
-        r"(?im)^\s*(?:job\s+)?(?:requisition|req(?:uisition)?|role|job)\s*(?:number|id|req)?\s*[:#-]\s*(?P<value>[A-Za-z0-9_-]+)\s*$",
-        r"(?im)^\s*(?:job\s+)?(?:requisition|req(?:uisition)?|role|job)\s*(?:number|id|req)?\s*$\s*(?P<value>[A-Za-z0-9_-]+)\s*$",
-        r"(?im)\breq(?:uisition)?\s*(?:id|number)?\s*[:#]?\s*(?P<value>\d{4,})\b",
-        r"(?im)\bjob\s*(?:id|number)?\s*[:#]?\s*(?P<value>\d{4,})\b",
-        r"(?im)\brole\s*(?:id|number)?\s*[:#]?\s*(?P<value>\d{4,})\b",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, job_description)
-        if match:
-            return slugify(match.group("value"))
-    return "unknown"
-
-
 def slugify(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", value)
-    ascii_value = normalized.encode("ascii", "ignore").decode("ascii").lower()
-    slug = re.sub(r"[^a-z0-9]+", "_", ascii_value).strip("_")
+    ascii_value = (value or "").strip().lower()
+    if not ascii_value:
+        return "unknown"
+
+    slug_chars: list[str] = []
+    last_was_separator = False
+    for char in ascii_value:
+        if char.isascii() and char.isalnum():
+            slug_chars.append(char)
+            last_was_separator = False
+            continue
+
+        if slug_chars and not last_was_separator:
+            slug_chars.append("_")
+            last_was_separator = True
+
+    slug = "".join(slug_chars).strip("_")
     return slug or "unknown"
 
 

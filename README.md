@@ -98,7 +98,7 @@ Example:
 - `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.docx`
 - `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.pdf`
 
-The candidate name is derived from the resume header. The company and role number are extracted from the job description and fall back to `unknown` when unavailable.
+The candidate name is derived from the resume header. The company and role number used in the output path come from the structured model output and fall back to `unknown` when unavailable.
 
 ## Job Tracker Behavior
 

@@ -146,7 +146,7 @@ def validate_tailoring(structure: ResumeStructure, tailoring: TailoredResume) ->
                 f"Experience {index} company mismatch: expected '{source.company}', got '{generated.company}'."
             )
 
-        if _normalize_text(source.role) != _normalize_text(generated.role):
+        if not _roles_match(source.role, generated.role):
             raise DocxEditingError(
                 f"Experience {index} role mismatch: expected '{source.role}', got '{generated.role}'."
             )
@@ -404,6 +404,25 @@ def _contains_date_range(text: str) -> bool:
 
 def _normalize_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _roles_match(source_role: str, generated_role: str) -> bool:
+    """Allow semantically equivalent role strings with optional extra subheading segments."""
+
+    if _normalize_text(source_role) == _normalize_text(generated_role):
+        return True
+
+    source_parts = _role_parts(source_role)
+    generated_parts = _role_parts(generated_role)
+    if not source_parts or not generated_parts:
+        return False
+
+    common_length = min(len(source_parts), len(generated_parts))
+    return source_parts[:common_length] == generated_parts[:common_length]
+
+
+def _role_parts(value: str) -> list[str]:
+    return [_normalize_text(part) for part in value.split("|") if _normalize_text(part)]
 
 
 def _diff_block(label: str, before: str, after: str) -> list[str]:
