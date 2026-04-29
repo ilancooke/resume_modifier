@@ -2,6 +2,8 @@
 
 Local Python CLI for tailoring a base resume to a job description, preserving the original `.docx` formatting, exporting the tailored result to PDF through Apple Pages on macOS, and appending an entry to a job application tracker workbook.
 
+The package also includes a separate read-only workflow for rating how well a PDF resume matches a job description.
+
 ## What It Does
 
 For each run, the tool:
@@ -34,7 +36,13 @@ If you are using the project virtualenv:
 Or install dependencies directly into the existing venv:
 
 ```bash
-./.venv/bin/python -m pip install openai pydantic python-dotenv python-docx openpyxl
+./.venv/bin/python -m pip install openai pydantic python-dotenv python-docx openpyxl pymupdf
+```
+
+For the resume match validation workflow, install the package dependencies so PyMuPDF is available:
+
+```bash
+./.venv/bin/python -m pip install -e .
 ```
 
 ## Environment
@@ -162,6 +170,66 @@ python tailor_resume.py --dry-run
 python tailor_resume.py --show-diff
 python tailor_resume.py --log-level DEBUG
 ```
+
+## Resume Match Validation
+
+Run this separate read-only workflow to rate how well a PDF resume matches a job description:
+
+```bash
+./.venv/bin/python validate_resume_match.py \
+  --resume /path/to/resume.pdf \
+  --jd /path/to/role.txt
+```
+
+If `--jd` is omitted, the workflow uses `job_description_path` from `config.json`.
+
+The validation workflow:
+
+1. Extracts native text from the resume PDF with PyMuPDF
+2. Uses the OpenAI API with strict structured output to evaluate the match
+3. Prints an overall score, dimension scores, strengths, gaps, knockout risks, and recommended resume changes
+4. Does not edit the resume, export a PDF, or update the application tracker
+
+Optional JSON output:
+
+```bash
+./.venv/bin/python validate_resume_match.py \
+  --resume /path/to/resume.pdf \
+  --jd /path/to/role.txt \
+  --output-json /path/to/match_report.json
+```
+
+### Batch Match Validation
+
+Run the validator against every PDF resume in a folder:
+
+```bash
+./.venv/bin/python validate_resume_match.py \
+  --resume-dir /path/to/resume_folder \
+  --jd /path/to/role.txt \
+  --output-dir /path/to/match_reports
+```
+
+Batch mode writes:
+
+- one `*.match.json` report per resume
+- `summary.csv`
+
+The summary CSV is sorted by `overall_score` descending, with failed resumes at the bottom. It includes the resume file, resume path, status, error, total score, rating label, each dimension score, and the final summary as the last column.
+
+### Match Rating Dimensions
+
+The score is job-type agnostic and totals 100 points:
+
+- `Required qualifications match`: 25
+- `Core responsibility alignment`: 25
+- `Relevant skills and capabilities`: 15
+- `Industry, domain, and context fit`: 10
+- `Seniority and scope fit`: 10
+- `Evidence strength`: 10
+- `Communication and discoverability`: 5
+
+The workflow uses native PDF text extraction first. OCR is not implemented yet; if a resume is scanned or image-only, the command reports that the extracted text is likely incomplete.
 
 ## Notes
 
