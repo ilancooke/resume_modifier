@@ -4,14 +4,16 @@ from __future__ import annotations
 
 
 MATCH_DIMENSIONS = [
-    ("Required qualifications match", 25),
-    ("Core responsibility alignment", 25),
-    ("Relevant skills and capabilities", 15),
+    ("Required qualifications match", 10),
+    ("Core responsibility alignment", 10),
+    ("Relevant skills and capabilities", 10),
     ("Industry, domain, and context fit", 10),
     ("Seniority and scope fit", 10),
     ("Evidence strength", 10),
-    ("Communication and discoverability", 5),
+    ("Communication and discoverability", 10),
 ]
+
+MATCH_MAX_SCORE = sum(max_score for _, max_score in MATCH_DIMENSIONS)
 
 
 SYSTEM_PROMPT = """You evaluate how well a resume matches a job description.
@@ -30,15 +32,15 @@ Rules:
 - Use concise, plain language.
 
 Scoring dimensions:
-- Required qualifications match: 25 points.
-- Core responsibility alignment: 25 points.
-- Relevant skills and capabilities: 15 points.
+- Required qualifications match: 10 points.
+- Core responsibility alignment: 10 points.
+- Relevant skills and capabilities: 10 points.
 - Industry, domain, and context fit: 10 points.
 - Seniority and scope fit: 10 points.
 - Evidence strength: 10 points.
-- Communication and discoverability: 5 points.
+- Communication and discoverability: 10 points.
 
-The overall_score must equal the sum of all dimension scores and must be between 0 and 100.
+The overall_score must equal the sum of all dimension scores and must be between 0 and 70.
 """
 
 
@@ -75,11 +77,11 @@ Return a JSON object with:
 - summary
 
 Rating labels:
-- Excellent match: 90 to 100
-- Strong match: 75 to 89
-- Good match: 60 to 74
-- Partial match: 40 to 59
-- Weak match: 0 to 39
+- Excellent match: 90% to 100% of total score
+- Strong match: 75% to 89% of total score
+- Good match: 60% to 74% of total score
+- Partial match: 40% to 59% of total score
+- Weak match: 0% to 39% of total score
 
 Resume:
 {resume_text}

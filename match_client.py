@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
-from match_prompts import MATCH_DIMENSIONS, SYSTEM_PROMPT, build_user_prompt
+from match_prompts import MATCH_DIMENSIONS, MATCH_MAX_SCORE, SYSTEM_PROMPT, build_user_prompt
 
 LOGGER = logging.getLogger(__name__)
 
@@ -209,8 +209,8 @@ def _validate_report_dimensions(report: ResumeMatchReport) -> None:
             )
         total_score += dimension.score
 
-    if total_score < 0 or total_score > 100:
-        raise ResumeMatchError(f"Dimension total {total_score} is outside 0..100.")
+    if total_score < 0 or total_score > MATCH_MAX_SCORE:
+        raise ResumeMatchError(f"Dimension total {total_score} is outside 0..{MATCH_MAX_SCORE}.")
 
 
 def _dimension_total(report: ResumeMatchReport) -> int:
@@ -218,13 +218,14 @@ def _dimension_total(report: ResumeMatchReport) -> int:
 
 
 def _rating_label_for_score(score: int) -> str:
-    if score >= 90:
+    percentage = (score / MATCH_MAX_SCORE) * 100
+    if percentage >= 90:
         return "Excellent match"
-    if score >= 75:
+    if percentage >= 75:
         return "Strong match"
-    if score >= 60:
+    if percentage >= 60:
         return "Good match"
-    if score >= 40:
+    if percentage >= 40:
         return "Partial match"
     return "Weak match"
 

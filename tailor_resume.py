@@ -8,11 +8,13 @@ import shutil
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from config import ConfigError, load_config
 from docx_editor import apply_tailoring, build_diff_preview, load_resume_structure, save_resume
 from export_pdf import export_docx_to_pdf
 from openai_client import ResumeTailoringError, TailoredResume, generate_tailored_resume
+from validate_resume_match import format_dimension_comparison_table, validate_resume
 
 LOGGER = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="gpt-5.4-mini",
-        help="OpenAI model to use for the structured tailoring call.",
+        help="OpenAI model to use for structured tailoring and match validation calls.",
     )
     parser.add_argument(
         "--dry-run",
@@ -116,6 +118,14 @@ def main() -> int:
         apply_tailoring(editable_structure, tailoring)
         save_resume(editable_structure, docx_output_path)
         export_docx_to_pdf(docx_output_path, pdf_output_path)
+        print(
+            run_match_comparison(
+                base_resume_path=resume_path,
+                tailored_pdf_path=pdf_output_path,
+                job_description=job_description,
+                model=args.model,
+            )
+        )
     except (OSError, ValueError, ConfigError, ResumeTailoringError, RuntimeError) as exc:
         LOGGER.error("%s", exc)
         return 1
@@ -131,6 +141,35 @@ def request_tailoring(*, structure, job_description: str, model: str) -> Tailore
         editable_resume=structure.editable_payload(),
         job_description=job_description,
         model=model,
+    )
+
+
+def run_match_comparison(
+    *,
+    base_resume_path: Path,
+    tailored_pdf_path: Path,
+    job_description: str,
+    model: str,
+) -> str:
+    """Validate base and tailored resume match scores and format their score movement."""
+
+    with TemporaryDirectory(prefix="resume_match_") as temp_dir:
+        base_pdf_path = Path(temp_dir) / f"{base_resume_path.stem}.pdf"
+        export_docx_to_pdf(base_resume_path, base_pdf_path)
+        _, base_report = validate_resume(
+            resume_path=base_pdf_path,
+            job_description=job_description,
+            model=model,
+        )
+        _, tailored_report = validate_resume(
+            resume_path=tailored_pdf_path,
+            job_description=job_description,
+            model=model,
+        )
+
+    return format_dimension_comparison_table(
+        base_report=base_report,
+        tailored_report=tailored_report,
     )
 
 

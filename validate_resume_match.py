@@ -11,7 +11,7 @@ from pathlib import Path
 
 from config import ConfigError, load_config
 from match_client import ResumeMatchError, ResumeMatchReport, generate_resume_match_report
-from match_prompts import MATCH_DIMENSIONS
+from match_prompts import MATCH_DIMENSIONS, MATCH_MAX_SCORE
 from resume_reader import ResumeReadError, ResumeText, extract_resume_text
 
 LOGGER = logging.getLogger(__name__)
@@ -201,7 +201,7 @@ def validate_resume(
 
 def format_report(report: ResumeMatchReport, resume_text: ResumeText) -> str:
     lines = [
-        f"Overall: {report.overall_score}/100 ({report.rating_label})",
+        f"Overall: {report.overall_score}/{MATCH_MAX_SCORE} ({report.rating_label})",
         "",
         report.summary.strip(),
         "",
@@ -285,7 +285,7 @@ def format_batch_summary(*, rows: list[dict[str, str]], summary_path: Path) -> s
     for row in sorted_rows:
         if row["status"] == "success":
             lines.append(
-                f"- {row['resume_file']}: {row['overall_score']}/100 ({row['rating_label']})"
+                f"- {row['resume_file']}: {row['overall_score']}/{MATCH_MAX_SCORE} ({row['rating_label']})"
             )
         else:
             lines.append(f"- {row['resume_file']}: ERROR - {row['error']}")
@@ -304,6 +304,72 @@ def _success_summary_row(*, resume_path: Path, report: ResumeMatchReport) -> dic
         row[_dimension_column_name(name)] = str(scores_by_dimension.get(name, ""))
 
     return row
+
+
+def format_dimension_comparison_table(
+    *,
+    base_report: ResumeMatchReport,
+    tailored_report: ResumeMatchReport,
+) -> str:
+    """Format dimension-level score movement from base to tailored resume."""
+
+    base_scores = _scores_by_dimension(base_report)
+    tailored_scores = _scores_by_dimension(tailored_report)
+    rows: list[tuple[str, str, str, str]] = []
+    for name, _ in MATCH_DIMENSIONS:
+        base_score = base_scores.get(name, 0)
+        tailored_score = tailored_scores.get(name, 0)
+        delta = tailored_score - base_score
+        rows.append((name, str(base_score), str(tailored_score), _format_delta(delta)))
+
+    total_delta = tailored_report.overall_score - base_report.overall_score
+    rows.append(
+        (
+            "Total",
+            str(base_report.overall_score),
+            str(tailored_report.overall_score),
+            _format_delta(total_delta),
+        )
+    )
+
+    headers = ("Dimension", "Base", "Tailored", "Delta")
+    widths = [
+        max(len(headers[0]), *(len(row[0]) for row in rows)),
+        max(len(headers[1]), *(len(row[1]) for row in rows)),
+        max(len(headers[2]), *(len(row[2]) for row in rows)),
+        max(len(headers[3]), *(len(row[3]) for row in rows)),
+    ]
+    lines = [
+        "Resume Match Comparison:",
+        f"Scores are /10 per dimension and /{MATCH_MAX_SCORE} total.",
+        _format_table_row(headers, widths),
+        _format_table_separator(widths),
+    ]
+    lines.extend(_format_table_row(row, widths) for row in rows)
+    return "\n".join(lines)
+
+
+def _scores_by_dimension(report: ResumeMatchReport) -> dict[str, int]:
+    return {dimension.name: dimension.score for dimension in report.dimension_scores}
+
+
+def _format_delta(delta: int) -> str:
+    if delta > 0:
+        return f"+{delta}"
+    return str(delta)
+
+
+def _format_table_row(values: tuple[str, str, str, str], widths: list[int]) -> str:
+    return (
+        f"{values[0]:<{widths[0]}}  "
+        f"{values[1]:>{widths[1]}}  "
+        f"{values[2]:>{widths[2]}}  "
+        f"{values[3]:>{widths[3]}}"
+    )
+
+
+def _format_table_separator(widths: list[int]) -> str:
+    return "  ".join("-" * width for width in widths)
 
 
 def _error_summary_row(*, resume_path: Path, error: str) -> dict[str, str]:

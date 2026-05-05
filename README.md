@@ -17,6 +17,7 @@ For each run, the tool:
    - extract company name and job ID from the job description for output naming
 4. Updates the copied `.docx` in place without recreating the document
 5. Exports the tailored resume to PDF using Apple Pages
+6. Automatically compares the base and tailored PDFs against the job description and prints a dimension-level score table
 
 ## Requirements
 
@@ -105,6 +106,23 @@ Example:
 
 The candidate name is derived from the resume header. The company and job ID used in the output path come from the structured model output and fall back to `unknown` when unavailable.
 
+After a successful run, the terminal also prints a base-vs-tailored match comparison. Each dimension is scored out of 10, and the total is scored out of 70:
+
+```text
+Resume Match Comparison:
+Scores are /10 per dimension and /70 total.
+Dimension                               Base  Tailored  Delta
+--------------------------------------  ----  --------  -----
+Required qualifications match              7         8     +1
+Core responsibility alignment              6         8     +2
+Relevant skills and capabilities           8         8      0
+Industry, domain, and context fit          7         8     +1
+Seniority and scope fit                    7         7      0
+Evidence strength                          8         8      0
+Communication and discoverability          5         8     +3
+Total                                     48        55     +7
+```
+
 ## OpenAI Model
 
 The default model is `gpt-5.4-mini`.
@@ -177,15 +195,15 @@ The summary CSV is sorted by `overall_score` descending, with failed resumes at 
 
 ### Match Rating Dimensions
 
-The score is job-type agnostic and totals 100 points:
+The score is job-type agnostic. Each dimension is scored out of 10, for a total of 70 points:
 
-- `Required qualifications match`: 25
-- `Core responsibility alignment`: 25
-- `Relevant skills and capabilities`: 15
+- `Required qualifications match`: 10
+- `Core responsibility alignment`: 10
+- `Relevant skills and capabilities`: 10
 - `Industry, domain, and context fit`: 10
 - `Seniority and scope fit`: 10
 - `Evidence strength`: 10
-- `Communication and discoverability`: 5
+- `Communication and discoverability`: 10
 
 The workflow uses native PDF text extraction first. OCR is not implemented yet; if a resume is scanned or image-only, the command reports that the extracted text is likely incomplete.
 
