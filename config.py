@@ -16,7 +16,6 @@ class AppConfig:
     base_resume_path: Path
     job_description_path: Path
     tailored_resumes_dir: Path
-    job_application_tracker_path: Path
 
 
 class ConfigError(RuntimeError):
@@ -52,15 +51,8 @@ def load_config(path: Path | None = None) -> AppConfig:
             "Config file must define a non-empty string for 'tailored_resumes_dir'."
         )
 
-    tracker_path = payload.get("job_application_tracker_path")
-    if not isinstance(tracker_path, str) or not tracker_path.strip():
-        raise ConfigError(
-            "Config file must define a non-empty string for 'job_application_tracker_path'."
-        )
-
     return AppConfig(
         base_resume_path=Path(base_resume_path).expanduser().resolve(),
         job_description_path=Path(job_description_path).expanduser().resolve(),
         tailored_resumes_dir=Path(output_dir).expanduser().resolve(),
-        job_application_tracker_path=Path(tracker_path).expanduser().resolve(),
     )

@@ -13,7 +13,6 @@ from config import ConfigError, load_config
 from docx_editor import apply_tailoring, build_diff_preview, load_resume_structure, save_resume
 from export_pdf import export_docx_to_pdf
 from openai_client import ResumeTailoringError, TailoredResume, generate_tailored_resume
-from tracker_updater import TrackerUpdateError, append_tracker_row
 
 LOGGER = logging.getLogger(__name__)
 
@@ -116,11 +115,7 @@ def main() -> int:
         apply_tailoring(editable_structure, tailoring)
         save_resume(editable_structure, docx_output_path)
         export_docx_to_pdf(docx_output_path, pdf_output_path)
-        append_tracker_row(
-            tracker_path=config.job_application_tracker_path,
-            tracker_details=tailoring.tracker,
-        )
-    except (OSError, ValueError, ConfigError, ResumeTailoringError, TrackerUpdateError, RuntimeError) as exc:
+    except (OSError, ValueError, ConfigError, ResumeTailoringError, RuntimeError) as exc:
         LOGGER.error("%s", exc)
         return 1
 
@@ -154,12 +149,12 @@ def extract_role_metadata(*, structure, job_description: str) -> RoleMetadata:
 
 
 def enrich_role_metadata(*, metadata: RoleMetadata, tailoring: TailoredResume) -> RoleMetadata:
-    tracker_company_slug = slugify(tailoring.tracker.company_name)
-    company_slug = tracker_company_slug if tracker_company_slug != "unknown" else metadata.company_slug
+    generated_company_slug = slugify(tailoring.metadata.company_name)
+    company_slug = generated_company_slug if generated_company_slug != "unknown" else metadata.company_slug
 
     role_number_slug = metadata.role_number_slug
     if role_number_slug == "unknown":
-        role_number_slug = slugify(tailoring.tracker.job_id)
+        role_number_slug = slugify(tailoring.metadata.job_id)
 
     return RoleMetadata(
         candidate_slug=metadata.candidate_slug,

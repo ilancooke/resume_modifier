@@ -1,6 +1,6 @@
 # Resume Modifier
 
-Local Python CLI for tailoring a base resume to a job description, preserving the original `.docx` formatting, exporting the tailored result to PDF through Apple Pages on macOS, and appending an entry to a job application tracker workbook.
+Local Python CLI for tailoring a base resume to a job description, preserving the original `.docx` formatting, and exporting the tailored result to PDF through Apple Pages on macOS.
 
 The package also includes a separate read-only workflow for rating how well a PDF resume matches a job description.
 
@@ -14,10 +14,9 @@ For each run, the tool:
    - rewrite the summary
    - rewrite bullets for each role
    - reorder bullets within each role
-   - extract tracker metadata from the job description
+   - extract company name and job ID from the job description for output naming
 4. Updates the copied `.docx` in place without recreating the document
 5. Exports the tailored resume to PDF using Apple Pages
-6. Appends a row to the Excel job application tracker
 
 ## Requirements
 
@@ -36,7 +35,7 @@ If you are using the project virtualenv:
 Or install dependencies directly into the existing venv:
 
 ```bash
-./.venv/bin/python -m pip install openai pydantic python-dotenv python-docx openpyxl pymupdf
+./.venv/bin/python -m pip install openai pydantic python-dotenv python-docx pymupdf
 ```
 
 For the resume match validation workflow, install the package dependencies so PyMuPDF is available:
@@ -61,8 +60,7 @@ Edit [config.json](/Users/ilan/workspace/resume_modifier/config.json):
 {
   "base_resume_path": "/Users/ilan/Documents/resumes/base/ilan_cooke_resume.docx",
   "job_description_path": "/Users/ilan/Documents/resumes/job_description/role.txt",
-  "tailored_resumes_dir": "/Users/ilan/Documents/resumes/roles",
-  "job_application_tracker_path": "/Users/ilan/Documents/resumes/job_application_tracker.xlsx"
+  "tailored_resumes_dir": "/Users/ilan/Documents/resumes/roles"
 }
 ```
 
@@ -71,7 +69,6 @@ Edit [config.json](/Users/ilan/workspace/resume_modifier/config.json):
 - `base_resume_path`: default input resume `.docx`
 - `job_description_path`: default input job description `.txt`
 - `tailored_resumes_dir`: base directory where tailored resumes are written
-- `job_application_tracker_path`: Excel workbook updated after each successful resume generation
 
 ## Default Inputs
 
@@ -98,54 +95,15 @@ python tailor_resume.py \
 
 The tool creates this structure automatically:
 
-- `<tailored_resumes_dir>/<company>/<candidate>_<company>_<role_number>.docx`
-- `<tailored_resumes_dir>/<company>/<candidate>_<company>_<role_number>.pdf`
+- `<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.docx`
+- `<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.pdf`
 
 Example:
 
 - `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.docx`
 - `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.pdf`
 
-The candidate name is derived from the resume header. The company and role number used in the output path come from the structured model output and fall back to `unknown` when unavailable.
-
-## Job Tracker Behavior
-
-After a successful non-dry-run execution, the tool appends a row to the workbook at `job_application_tracker_path`.
-
-If the tracker file does not exist yet, the tool creates a new `.xlsx` workbook with these headers:
-
-- `Company Name`
-- `Role Title`
-- `Location`
-- `DS role type`
-- `Alignment strength with my background`
-- `Salary Range`
-- `Job ID`
-- `Date Applied`
-- `Comments`
-- `Status`
-
-### How Tracker Fields Are Filled
-
-- `Company Name`: extracted from the job description, otherwise `unknown`
-- `Role Title`: extracted from the job description, otherwise `unknown`
-- `Location`: extracted from the job description, including `remote` or `hybrid` wording when present, otherwise `unknown`
-- `DS role type`: one primary category chosen by the model from:
-  - `Product / Experimentation DS`
-  - `Applied ML`
-  - `Machine Learning/Predictive model building`
-  - `ML Engineering`
-  - `AI / LLM / Agentic`
-  - `Analytics / BI`
-  - `Other`
-- `Alignment strength with my background`: one honest sentence generated from the resume and job description
-- `Salary Range`: extracted from the job description, otherwise `unknown`
-- `Job ID`: extracted from the job description, otherwise `unknown`
-- `Date Applied`: left blank for manual entry
-- `Comments`: left blank for manual entry
-- `Status`: left blank for manual entry
-
-The tracker updater maps values by header name, so reordering columns in the workbook is supported as long as the same headers are still present.
+The candidate name is derived from the resume header. The company and job ID used in the output path come from the structured model output and fall back to `unknown` when unavailable.
 
 ## OpenAI Model
 
@@ -159,7 +117,7 @@ python tailor_resume.py --model gpt-5.4-mini
 
 ## Useful Flags
 
-- `--dry-run`: generate and validate output without writing the DOCX, PDF, or tracker row
+- `--dry-run`: generate and validate output without writing the DOCX or PDF
 - `--show-diff`: print a unified diff of the summary and bullet changes
 - `--log-level`: set logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
 
@@ -188,7 +146,7 @@ The validation workflow:
 1. Extracts native text from the resume PDF with PyMuPDF
 2. Uses the OpenAI API with strict structured output to evaluate the match
 3. Prints an overall score, dimension scores, strengths, gaps, knockout risks, and recommended resume changes
-4. Does not edit the resume, export a PDF, or update the application tracker
+4. Does not edit the resume or export a PDF
 
 Optional JSON output:
 

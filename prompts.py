@@ -45,26 +45,13 @@ STYLE:
 OUTPUT GOAL:
 Produce a resume that is more relevant to the target role because the most important matching signals are clearer and more prominent, not because job-description keywords were mechanically inserted.
 
-TRACKER EXTRACTION:
+JOB METADATA EXTRACTION:
 - Extract:
   - company_name
-  - role_title
-  - location
   - job_id
-  - ds_role_type
-  - alignment_strength_comment
-  - salary_range
-- Use only information grounded in the job description and resume.
+- These fields are used only for naming the generated output files.
+- Use only information grounded in the job description.
 - If a field is not available, return "unknown".
-- `ds_role_type` must be exactly one of:
-  - Product / Experimentation DS
-  - Applied ML
-  - Machine Learning/Predictive model building
-  - ML Engineering
-  - AI / LLM / Agentic
-  - Analytics / BI
-  - Other
-- `alignment_strength_comment` must be one concise, honest sentence.
 """
 
 
@@ -126,7 +113,7 @@ Final self-check before answering:
 Return a JSON object with:
 - `summary`
 - `experiences`
-- `tracker`
+- `metadata`
 
 Each item in `experiences` must contain:
 - `company`

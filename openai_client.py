@@ -29,16 +29,11 @@ class TailoredExperience(BaseModel):
     bullet_order: list[int]
 
 
-class TrackerDetails(BaseModel):
-    """Structured job application tracker metadata."""
+class JobMetadata(BaseModel):
+    """Structured job metadata used for naming tailored outputs."""
 
     company_name: str
-    role_title: str
-    location: str
     job_id: str
-    ds_role_type: str
-    alignment_strength_comment: str
-    salary_range: str
 
 
 class TailoredResume(BaseModel):
@@ -46,7 +41,7 @@ class TailoredResume(BaseModel):
 
     summary: str
     experiences: list[TailoredExperience]
-    tracker: TrackerDetails
+    metadata: JobMetadata
 
 
 RESUME_TAILORING_SCHEMA: dict[str, Any] = {
@@ -74,41 +69,20 @@ RESUME_TAILORING_SCHEMA: dict[str, Any] = {
                 "required": ["company", "role", "bullets", "bullet_order"],
             },
         },
-        "tracker": {
+        "metadata": {
             "type": "object",
             "additionalProperties": False,
             "properties": {
                 "company_name": {"type": "string"},
-                "role_title": {"type": "string"},
-                "location": {"type": "string"},
                 "job_id": {"type": "string"},
-                "ds_role_type": {
-                    "type": "string",
-                    "enum": [
-                        "Product / Experimentation DS",
-                        "Applied ML",
-                        "Machine Learning/Predictive model building",
-                        "ML Engineering",
-                        "AI / LLM / Agentic",
-                        "Analytics / BI",
-                        "Other",
-                    ],
-                },
-                "alignment_strength_comment": {"type": "string"},
-                "salary_range": {"type": "string"},
             },
             "required": [
                 "company_name",
-                "role_title",
-                "location",
                 "job_id",
-                "ds_role_type",
-                "alignment_strength_comment",
-                "salary_range",
             ],
         },
     },
-    "required": ["summary", "experiences", "tracker"],
+    "required": ["summary", "experiences", "metadata"],
 }
 
 
