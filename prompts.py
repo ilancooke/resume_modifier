@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-SYSTEM_PROMPT = """You tailor resumes for specific job descriptions.
+REWRITE_SYSTEM_PROMPT = """You rewrite resume content for specific job descriptions.
 
 You must follow these rules:
 
@@ -19,7 +19,9 @@ STRUCTURE:
 - Keep the same number of bullets for each experience as the input.
 - Do NOT drop, combine, split, or add bullets.
 - Echo each experience's company and role exactly as provided.
-- `bullet_order` must be a zero-based permutation of the original bullet indexes for that experience.
+- Return each experience's `bullets` in the exact same order as the input bullets.
+- Each rewritten bullet at index N must correspond to the original bullet at index N.
+- Do not reorder bullets in this step.
 - The summary may be substantially rewritten, but it must remain factually grounded in the resume.
 
 WRITING QUALITY:
@@ -31,10 +33,11 @@ WRITING QUALITY:
 - Do NOT replace concrete details with generic filler.
 - Do NOT make superficial wording changes just to appear rewritten.
 - Some bullets may remain mostly unchanged if they are already strong and relevant.
-- At least 2 bullets in the most relevant experience must be materially reframed.
+- In the most relevant experience, aim to materially reframe 1 to 3 bullets when doing so improves relevance, clarity, or signal priority.
+- Do not reframe a bullet merely to satisfy a quota; preserve strong bullets when they are already well-aligned.
 - Materially reframed means the emphasis and value proposition clearly change, not just a few words.
 - Reduce redundancy across bullets when possible.
-- Different bullets should emphasize different aspects of the work rather than repeating the same model-building pattern.
+- Different bullets should emphasize distinct aspects of the work rather than repeating the same project, analysis, model, or system framing.
 - You may tighten wording for clarity, but do not remove important technical or business detail.
 
 STYLE:
@@ -55,60 +58,42 @@ JOB METADATA EXTRACTION:
 """
 
 
-def build_user_prompt(*, full_resume_text: str, editable_resume: dict[str, Any], job_description: str) -> str:
-    """Build the user prompt for the tailoring request."""
+def build_rewrite_prompt(*, full_resume_text: str, editable_resume: dict[str, Any], job_description: str) -> str:
+    """Build the user prompt for the rewrite-only request."""
 
     editable_json = json.dumps(editable_resume, indent=2, ensure_ascii=True)
 
-    return f"""Tailor the editable resume content to the job description.
+    return f"""Rewrite the editable resume content to the job description.
 
-This is a signal-prioritization task, not a keyword-matching task.
+This is a relevance and clarity task, not a keyword-matching task.
 
 Follow this process:
 
 1. Identify the 3 to 5 most important signals in the job description.
 2. Find the strongest evidence for those signals in the resume.
-3. Rewrite and reorder bullets so those signals appear earlier and more clearly.
+3. Rewrite bullets so those signals are clearer while keeping each bullet mapped to its original index.
 
 Task requirements:
 - Keep the same number of bullets per role.
 - Do not drop, combine, split, or add bullets.
-- Reorder bullets when needed.
-- Do not keep the original order by default.
-- The first 2 to 3 bullets in the most relevant experience should reflect the strongest match to the role.
-- The first bullet in the most relevant experience should emphasize the most relevant signal for the role.
-- At least 2 bullets in the most relevant experience must be materially reframed.
+- Keep bullets in the exact same order as the input.
+- Each rewritten bullet must remain grounded in the original bullet at the same index.
+- In the most relevant experience, aim to materially reframe 1 to 3 bullets when doing so improves relevance, clarity, or signal priority.
+- Do not reframe a bullet merely to satisfy a quota; preserve strong bullets when they are already well-aligned.
 - Prefer stronger framing around decisions enabled, business impact, tradeoffs, experimentation, analytics, or system outcomes when supported by the resume.
-- Avoid repeating the same “built model / deployed model / monitored model” framing across multiple bullets.
+- Avoid repeating the same project, analysis, model, or system framing across multiple bullets.
 
-Role-specific prioritization:
-- For Product / Experimentation DS roles, prioritize:
-  - experimentation and causal analysis
-  - large-scale data analysis
-  - decision-making and business impact
-  - stakeholder influence
-- For Applied ML roles, prioritize:
-  - modeling challenges
-  - features and constraints
-  - evaluation and performance
-  - production systems
-- For AI / LLM / Agentic roles, prioritize:
-  - evaluation design
-  - orchestration
-  - prompt or model iteration
-  - validation and reliability
-- For Analytics / BI roles, prioritize:
-  - SQL and analysis
-  - dashboards and reporting
-  - KPI design
-  - root-cause analysis
-  - decision support
+Signal prioritization:
+- Infer the role's primary success criteria from the job description instead of assuming a fixed role category.
+- Prioritize required qualifications, core responsibilities, and repeated themes over preferred or incidental keywords.
+- Favor resume evidence that directly supports the target role's main outcomes, scope, tools, domain, stakeholders, or operating environment.
+- If the job description is vague, prioritize broadly transferable evidence such as measurable outcomes, technical depth, ownership, collaboration, and communication.
 
 Final self-check before answering:
-- Are the most important role signals visible in the summary and top bullets?
-- Were at least 2 bullets in the most relevant experience materially reframed?
+- Are the most important role signals clearer in the summary and rewritten bullets?
+- Were bullets materially reframed only when doing so improved relevance, clarity, or signal priority?
 - Does the output feel meaningfully more tailored, rather than lightly reworded?
-- Is the bullet order helping the resume fit this role better?
+- Did every rewritten bullet remain mapped to the original bullet at the same index?
 
 Return a JSON object with:
 - `summary`
@@ -118,7 +103,6 @@ Return a JSON object with:
 Each item in `experiences` must contain:
 - `company`
 - `role`
-- `bullet_order`
 - `bullets`
 
 Base resume text for context:
@@ -126,6 +110,73 @@ Base resume text for context:
 
 Editable resume content:
 {editable_json}
+
+Job description:
+{job_description}
+"""
+
+
+BULLET_ORDER_SYSTEM_PROMPT = """You order rewritten resume bullets for a specific job description.
+
+You must follow these rules:
+
+- Do not rewrite, edit, add, remove, combine, or split bullets.
+- Return only the final bullet order for each experience.
+- `bullet_order` must be a zero-based permutation of the rewritten bullet indexes for that experience.
+- Because rewritten bullets are kept in original source order, each index also corresponds to the original source bullet at the same index.
+- Echo each experience's company and role exactly as provided.
+- Reorder bullets only when it improves signal priority.
+- Keep the original order when it already presents the strongest evidence first.
+- The first 2 to 3 bullets in the most relevant experience should prioritize the strongest supported matches to the role.
+- The first bullet in the most relevant experience should emphasize the strongest supported match to one of the role's most important signals.
+"""
+
+
+def build_bullet_order_prompt(
+    *,
+    editable_resume: dict[str, Any],
+    rewritten_resume: dict[str, Any],
+    job_description: str,
+) -> str:
+    """Build the user prompt for the order-only request."""
+
+    editable_json = json.dumps(editable_resume, indent=2, ensure_ascii=True)
+    rewritten_json = json.dumps(rewritten_resume, indent=2, ensure_ascii=True)
+
+    return f"""Choose the final display order for each experience's rewritten bullets.
+
+This is an ordering-only task. Do not rewrite any bullet text.
+
+Use this process:
+
+1. Infer the role's primary success criteria from the job description.
+2. Compare those criteria against the rewritten bullets.
+3. Return the bullet indexes in the order they should appear in the tailored resume.
+
+Ordering guidance:
+- Prioritize required qualifications, core responsibilities, and repeated themes over preferred or incidental keywords.
+- Favor bullets that directly support the target role's main outcomes, scope, tools, domain, stakeholders, or operating environment.
+- When multiple signals are important, order bullets so the strongest supported matches appear first.
+- If the job description is vague, prioritize broadly transferable evidence such as measurable outcomes, technical depth, ownership, collaboration, and communication.
+- Preserve original order when reordering would not improve signal priority.
+
+Indexing:
+- Use zero-based indexes in `bullet_order`.
+- If the final order should be original bullets 3, 1, 2, return `bullet_order`: [2, 0, 1].
+
+Return a JSON object with:
+- `experiences`
+
+Each item in `experiences` must contain:
+- `company`
+- `role`
+- `bullet_order`
+
+Original editable resume content:
+{editable_json}
+
+Rewritten resume content, with bullets still in original source order:
+{rewritten_json}
 
 Job description:
 {job_description}

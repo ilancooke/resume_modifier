@@ -90,6 +90,7 @@ def main() -> int:
             base_dir=config.tailored_resumes_dir,
             metadata=metadata,
         )
+        print(format_bullet_order_report(tailoring))
 
         if args.show_diff or args.dry_run:
             diff_preview = build_diff_preview(structure, tailoring)
@@ -131,6 +132,19 @@ def request_tailoring(*, structure, job_description: str, model: str) -> Tailore
         job_description=job_description,
         model=model,
     )
+
+
+def format_bullet_order_report(tailoring: TailoredResume) -> str:
+    """Format the generated bullet order for terminal visibility."""
+
+    lines = ["Bullet order:"]
+    for experience in tailoring.experiences:
+        display_order = [index + 1 for index in experience.bullet_order]
+        lines.append(f"{experience.company} | {experience.role}")
+        lines.append(f"bullet_order: {display_order}")
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def derive_output_paths(*, base_dir: Path, metadata: RoleMetadata) -> tuple[Path, Path]:

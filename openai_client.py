@@ -11,7 +11,12 @@ from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 from dotenv import load_dotenv
 
-from prompts import SYSTEM_PROMPT, build_user_prompt
+from prompts import (
+    BULLET_ORDER_SYSTEM_PROMPT,
+    REWRITE_SYSTEM_PROMPT,
+    build_bullet_order_prompt,
+    build_rewrite_prompt,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +41,36 @@ class JobMetadata(BaseModel):
     job_id: str
 
 
+class RewrittenExperience(BaseModel):
+    """Rewritten bullets for one experience, kept in original source order."""
+
+    company: str
+    role: str
+    bullets: list[str]
+
+
+class RewrittenResume(BaseModel):
+    """Structured result from the rewrite-only model call."""
+
+    summary: str
+    experiences: list[RewrittenExperience]
+    metadata: JobMetadata
+
+
+class BulletOrderExperience(BaseModel):
+    """Final bullet order for a single experience."""
+
+    company: str
+    role: str
+    bullet_order: list[int]
+
+
+class BulletOrderPlan(BaseModel):
+    """Structured result from the order-only model call."""
+
+    experiences: list[BulletOrderExperience]
+
+
 class TailoredResume(BaseModel):
     """Structured result returned by the model."""
 
@@ -44,7 +79,7 @@ class TailoredResume(BaseModel):
     metadata: JobMetadata
 
 
-RESUME_TAILORING_SCHEMA: dict[str, Any] = {
+REWRITTEN_RESUME_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
@@ -61,12 +96,8 @@ RESUME_TAILORING_SCHEMA: dict[str, Any] = {
                         "type": "array",
                         "items": {"type": "string"},
                     },
-                    "bullet_order": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                    },
                 },
-                "required": ["company", "role", "bullets", "bullet_order"],
+                "required": ["company", "role", "bullets"],
             },
         },
         "metadata": {
@@ -86,6 +117,31 @@ RESUME_TAILORING_SCHEMA: dict[str, Any] = {
 }
 
 
+BULLET_ORDER_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "experiences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "company": {"type": "string"},
+                    "role": {"type": "string"},
+                    "bullet_order": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                    },
+                },
+                "required": ["company", "role", "bullet_order"],
+            },
+        },
+    },
+    "required": ["experiences"],
+}
+
+
 def generate_tailored_resume(
     *,
     full_resume_text: str,
@@ -93,7 +149,7 @@ def generate_tailored_resume(
     job_description: str,
     model: str = "gpt-5.4-mini",
 ) -> TailoredResume:
-    """Generate a structured tailoring plan from the OpenAI API."""
+    """Generate rewritten resume content and a separate bullet ordering plan."""
 
     load_dotenv()
     api_key = os.getenv("OPENAI_API_KEY")
@@ -101,41 +157,158 @@ def generate_tailored_resume(
         raise ResumeTailoringError("OPENAI_API_KEY is not set.")
 
     client = OpenAI(api_key=api_key)
-    prompt = build_user_prompt(
+    rewritten_resume = _generate_rewritten_resume(
+        client=client,
+        full_resume_text=full_resume_text,
+        editable_resume=editable_resume,
+        job_description=job_description,
+        model=model,
+    )
+    bullet_order_plan = _generate_bullet_order_plan(
+        client=client,
+        editable_resume=editable_resume,
+        rewritten_resume=rewritten_resume,
+        job_description=job_description,
+        model=model,
+    )
+    return _merge_tailoring(rewritten_resume=rewritten_resume, bullet_order_plan=bullet_order_plan)
+
+
+def _generate_rewritten_resume(
+    *,
+    client: OpenAI,
+    full_resume_text: str,
+    editable_resume: dict[str, Any],
+    job_description: str,
+    model: str,
+) -> RewrittenResume:
+    prompt = build_rewrite_prompt(
         full_resume_text=full_resume_text,
         editable_resume=editable_resume,
         job_description=job_description,
     )
 
-    LOGGER.info("Requesting tailored resume content from OpenAI model %s", model)
+    LOGGER.info("Requesting rewritten resume content from OpenAI model %s", model)
     try:
         response = client.responses.create(
             model=model,
             temperature=0,
             input=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             text={
                 "format": {
                     "type": "json_schema",
-                    "name": "resume_tailoring",
+                    "name": "resume_rewrite",
                     "strict": True,
-                    "schema": RESUME_TAILORING_SCHEMA,
+                    "schema": REWRITTEN_RESUME_SCHEMA,
                 }
             },
         )
     except Exception as exc:  # pragma: no cover - SDK/network failure path
-        raise ResumeTailoringError(f"OpenAI API request failed: {exc}") from exc
+        raise ResumeTailoringError(f"OpenAI rewrite request failed: {exc}") from exc
 
     content = _extract_output_text(response)
-    LOGGER.debug("Received structured output payload: %s", content)
+    LOGGER.debug("Received rewrite payload: %s", content)
 
     try:
         payload = json.loads(content)
-        return TailoredResume.model_validate(payload)
+        return RewrittenResume.model_validate(payload)
     except (json.JSONDecodeError, ValidationError) as exc:
-        raise ResumeTailoringError(f"Structured output validation failed: {exc}") from exc
+        raise ResumeTailoringError(f"Rewrite output validation failed: {exc}") from exc
+
+
+def _generate_bullet_order_plan(
+    *,
+    client: OpenAI,
+    editable_resume: dict[str, Any],
+    rewritten_resume: RewrittenResume,
+    job_description: str,
+    model: str,
+) -> BulletOrderPlan:
+    prompt = build_bullet_order_prompt(
+        editable_resume=editable_resume,
+        rewritten_resume=rewritten_resume.model_dump(),
+        job_description=job_description,
+    )
+
+    LOGGER.info("Requesting bullet ordering plan from OpenAI model %s", model)
+    try:
+        response = client.responses.create(
+            model=model,
+            temperature=0,
+            input=[
+                {"role": "system", "content": BULLET_ORDER_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "resume_bullet_order",
+                    "strict": True,
+                    "schema": BULLET_ORDER_SCHEMA,
+                }
+            },
+        )
+    except Exception as exc:  # pragma: no cover - SDK/network failure path
+        raise ResumeTailoringError(f"OpenAI bullet ordering request failed: {exc}") from exc
+
+    content = _extract_output_text(response)
+    LOGGER.debug("Received bullet ordering payload: %s", content)
+
+    try:
+        payload = json.loads(content)
+        return BulletOrderPlan.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ResumeTailoringError(f"Bullet ordering output validation failed: {exc}") from exc
+
+
+def _merge_tailoring(
+    *,
+    rewritten_resume: RewrittenResume,
+    bullet_order_plan: BulletOrderPlan,
+) -> TailoredResume:
+    if len(rewritten_resume.experiences) != len(bullet_order_plan.experiences):
+        raise ResumeTailoringError(
+            "Bullet ordering changed the number of experience sections, which is not allowed."
+        )
+
+    experiences: list[TailoredExperience] = []
+    for index, (rewritten, ordered) in enumerate(
+        zip(rewritten_resume.experiences, bullet_order_plan.experiences, strict=True)
+    ):
+        if rewritten.company != ordered.company:
+            raise ResumeTailoringError(
+                f"Bullet ordering experience {index} company mismatch: expected '{rewritten.company}', got '{ordered.company}'."
+            )
+
+        if rewritten.role != ordered.role:
+            raise ResumeTailoringError(
+                f"Bullet ordering experience {index} role mismatch: expected '{rewritten.role}', got '{ordered.role}'."
+            )
+
+        expected_order = set(range(len(rewritten.bullets)))
+        generated_order = set(ordered.bullet_order)
+        if generated_order != expected_order or len(ordered.bullet_order) != len(rewritten.bullets):
+            raise ResumeTailoringError(
+                f"Bullet ordering experience {index} must be a permutation of 0..{len(rewritten.bullets) - 1}."
+            )
+
+        experiences.append(
+            TailoredExperience(
+                company=rewritten.company,
+                role=rewritten.role,
+                bullets=rewritten.bullets,
+                bullet_order=ordered.bullet_order,
+            )
+        )
+
+    return TailoredResume(
+        summary=rewritten_resume.summary,
+        experiences=experiences,
+        metadata=rewritten_resume.metadata,
+    )
 
 
 def _extract_output_text(response: Any) -> str:

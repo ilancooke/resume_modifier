@@ -10,10 +10,10 @@ For each run, the tool:
 
 1. Reads a base resume from `.docx`
 2. Reads a job description from raw text
-3. Uses the OpenAI API with strict structured output to:
+3. Uses two OpenAI API calls with strict structured output to:
    - rewrite the summary
-   - rewrite bullets for each role
-   - reorder bullets within each role
+   - rewrite bullets for each role in original source order
+   - choose the final bullet order within each role
    - extract company name and job ID from the job description for output naming
 4. Updates the copied `.docx` in place without recreating the document
 5. Exports the tailored resume to PDF using Apple Pages
