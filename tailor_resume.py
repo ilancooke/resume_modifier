@@ -12,11 +12,22 @@ from tempfile import TemporaryDirectory
 
 from config import ConfigError, load_config
 from docx_editor import apply_tailoring, build_diff_preview, load_resume_structure, save_resume
-from export_pdf import export_docx_to_pdf
-from openai_client import ResumeTailoringError, TailoredResume, generate_tailored_resume
+from export_pdf import (
+    TINY_OVERFLOW_WORD_LIMIT,
+    PdfLayoutError,
+    export_docx_to_pdf,
+    inspect_resume_pdf_layout,
+)
+from openai_client import (
+    ResumeTailoringError,
+    TailoredResume,
+    compress_tailored_resume,
+    generate_tailored_resume,
+)
 from validate_resume_match import format_dimension_comparison_table, validate_resume
 
 LOGGER = logging.getLogger(__name__)
+MAX_LAYOUT_REPAIR_ATTEMPTS = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,6 +129,12 @@ def main() -> int:
         apply_tailoring(editable_structure, tailoring)
         save_resume(editable_structure, docx_output_path)
         export_docx_to_pdf(docx_output_path, pdf_output_path)
+        tailoring = repair_tiny_pdf_overflow(
+            docx_output_path=docx_output_path,
+            pdf_output_path=pdf_output_path,
+            tailoring=tailoring,
+            model=args.model,
+        )
         print(
             run_match_comparison(
                 base_resume_path=resume_path,
@@ -126,7 +143,7 @@ def main() -> int:
                 model=args.model,
             )
         )
-    except (OSError, ValueError, ConfigError, ResumeTailoringError, RuntimeError) as exc:
+    except (OSError, ValueError, ConfigError, ResumeTailoringError, PdfLayoutError, RuntimeError) as exc:
         LOGGER.error("%s", exc)
         return 1
 
@@ -142,6 +159,60 @@ def request_tailoring(*, structure, job_description: str, model: str) -> Tailore
         job_description=job_description,
         model=model,
     )
+
+
+def repair_tiny_pdf_overflow(
+    *,
+    docx_output_path: Path,
+    pdf_output_path: Path,
+    tailoring: TailoredResume,
+    model: str,
+) -> TailoredResume:
+    """Repair tiny rendered overflow by compressing content and re-exporting."""
+
+    for attempt in range(1, MAX_LAYOUT_REPAIR_ATTEMPTS + 1):
+        layout_check = inspect_resume_pdf_layout(pdf_output_path)
+        if not layout_check.has_overflow:
+            return tailoring
+
+        if layout_check.overflow_word_count > TINY_OVERFLOW_WORD_LIMIT:
+            LOGGER.warning(
+                "Exported resume has %s pages; page %s contains %s words.",
+                layout_check.page_count,
+                layout_check.overflow_page_number,
+                layout_check.overflow_word_count,
+            )
+            return tailoring
+
+        LOGGER.warning(
+            "Tailored PDF spilled onto page %s with %s word(s). Running compression attempt %s/%s.",
+            layout_check.overflow_page_number,
+            layout_check.overflow_word_count,
+            attempt,
+            MAX_LAYOUT_REPAIR_ATTEMPTS,
+        )
+        tailoring = compress_tailored_resume(
+            tailoring=tailoring,
+            overflow_text=layout_check.overflow_text,
+            overflow_word_count=layout_check.overflow_word_count,
+            attempt=attempt,
+            model=model,
+        )
+        editable_structure = load_resume_structure(docx_output_path)
+        apply_tailoring(editable_structure, tailoring)
+        save_resume(editable_structure, docx_output_path)
+        export_docx_to_pdf(docx_output_path, pdf_output_path)
+
+    layout_check = inspect_resume_pdf_layout(pdf_output_path)
+    if layout_check.has_overflow and layout_check.overflow_word_count <= TINY_OVERFLOW_WORD_LIMIT:
+        overflow_preview = layout_check.overflow_text or "[no extractable text]"
+        raise PdfLayoutError(
+            f"Could not resolve tiny page overflow after {MAX_LAYOUT_REPAIR_ATTEMPTS} compression attempt(s). "
+            f"Page {layout_check.overflow_page_number} still has {layout_check.overflow_word_count} word(s).\n\n"
+            f"Page {layout_check.overflow_page_number} text:\n{overflow_preview}"
+        )
+
+    return tailoring
 
 
 def run_match_comparison(

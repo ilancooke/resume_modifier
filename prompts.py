@@ -181,3 +181,67 @@ Rewritten resume content, with bullets still in original source order:
 Job description:
 {job_description}
 """
+
+
+COMPRESSION_SYSTEM_PROMPT = """You conservatively compress already-tailored resume content to fix a tiny PDF overflow.
+
+You must follow these rules:
+
+FACTUALITY:
+- Preserve factual accuracy.
+- Do not invent or hallucinate experience, technologies, scope, metrics, titles, employers, dates, ownership, or outcomes.
+- Do not remove important metrics, tools, employers, roles, dates, or major outcomes.
+
+STRUCTURE:
+- Keep the same number of experiences as the input.
+- Keep the same number of bullets for each experience as the input.
+- Do NOT drop, combine, split, add, or reorder bullets.
+- Echo each experience's company and role exactly as provided.
+- Return each experience's `bullets` in the exact same order as the input bullets.
+
+COMPRESSION:
+- Make the smallest edits needed to recover approximately 2 to 3 rendered lines of space.
+- Prefer tightening the summary and the longest bullets.
+- Do not shorten every bullet.
+- Prefer removing redundant phrasing, filler, and repeated setup language over removing evidence.
+- Preserve the tailored role relevance and signal priority.
+- Do not use the em dash character (—).
+"""
+
+
+def build_compression_prompt(
+    *,
+    tailored_resume: dict[str, Any],
+    overflow_text: str,
+    overflow_word_count: int,
+    attempt: int,
+) -> str:
+    """Build the user prompt for a tiny-overflow compression pass."""
+
+    tailored_json = json.dumps(tailored_resume, indent=2, ensure_ascii=True)
+
+    return f"""Compress the tailored resume content just enough to resolve a tiny page overflow.
+
+The exported PDF spilled onto page 3 with {overflow_word_count} word(s).
+
+Page 3 overflow text:
+{overflow_text or "[no extractable text]"}
+
+This is compression attempt {attempt}.
+
+Goal:
+- Recover approximately 2 to 3 rendered lines of space.
+- Make the smallest content edits that are likely to fit the resume on 2 pages.
+
+Return a JSON object with:
+- `summary`
+- `experiences`
+
+Each item in `experiences` must contain:
+- `company`
+- `role`
+- `bullets`
+
+Tailored resume content to compress:
+{tailored_json}
+"""

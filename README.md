@@ -17,7 +17,8 @@ For each run, the tool:
    - extract company name and job ID from the job description for output naming
 4. Updates the copied `.docx` in place without recreating the document
 5. Exports the tailored resume to PDF using Apple Pages
-6. Automatically compares the base and tailored PDFs against the job description and prints a dimension-level score table
+6. Checks the exported PDF for tiny page-3 spillover and runs a conservative compression pass when needed
+7. Automatically compares the base and tailored PDFs against the job description and prints a dimension-level score table
 
 ## Requirements
 
@@ -105,6 +106,8 @@ Example:
 - `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.pdf`
 
 The candidate name is derived from the resume header. The company and job ID used in the output path come from the structured model output and fall back to `unknown` when unavailable.
+
+After export, the workflow checks that the tailored PDF fits within 2 pages. If the resume spills onto page 3 with 50 words or fewer, it asks the model to make the smallest content edits needed to recover roughly 2 to 3 rendered lines, re-applies the compressed content, re-exports the PDF, and checks again. It tries this repair up to 2 times before exiting with the remaining page-3 text.
 
 After a successful run, the terminal also prints a base-vs-tailored match comparison. Each dimension is scored out of 10, and the total is scored out of 70:
 

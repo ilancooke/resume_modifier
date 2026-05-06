@@ -13,8 +13,10 @@ from dotenv import load_dotenv
 
 from prompts import (
     BULLET_ORDER_SYSTEM_PROMPT,
+    COMPRESSION_SYSTEM_PROMPT,
     REWRITE_SYSTEM_PROMPT,
     build_bullet_order_prompt,
+    build_compression_prompt,
     build_rewrite_prompt,
 )
 
@@ -69,6 +71,13 @@ class BulletOrderPlan(BaseModel):
     """Structured result from the order-only model call."""
 
     experiences: list[BulletOrderExperience]
+
+
+class CompressionResult(BaseModel):
+    """Compressed tailored content that preserves existing ordering metadata."""
+
+    summary: str
+    experiences: list[RewrittenExperience]
 
 
 class TailoredResume(BaseModel):
@@ -142,6 +151,32 @@ BULLET_ORDER_SCHEMA: dict[str, Any] = {
 }
 
 
+COMPRESSION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "summary": {"type": "string"},
+        "experiences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "company": {"type": "string"},
+                    "role": {"type": "string"},
+                    "bullets": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": ["company", "role", "bullets"],
+            },
+        },
+    },
+    "required": ["summary", "experiences"],
+}
+
+
 def generate_tailored_resume(
     *,
     full_resume_text: str,
@@ -172,6 +207,62 @@ def generate_tailored_resume(
         model=model,
     )
     return _merge_tailoring(rewritten_resume=rewritten_resume, bullet_order_plan=bullet_order_plan)
+
+
+def compress_tailored_resume(
+    *,
+    tailoring: TailoredResume,
+    overflow_text: str,
+    overflow_word_count: int,
+    attempt: int,
+    model: str = "gpt-5.4-mini",
+) -> TailoredResume:
+    """Compress tailored content enough to resolve a tiny PDF overflow."""
+
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ResumeTailoringError("OPENAI_API_KEY is not set.")
+
+    client = OpenAI(api_key=api_key)
+    prompt = build_compression_prompt(
+        tailored_resume=tailoring.model_dump(),
+        overflow_text=overflow_text,
+        overflow_word_count=overflow_word_count,
+        attempt=attempt,
+    )
+
+    LOGGER.info("Requesting tiny-overflow compression from OpenAI model %s", model)
+    try:
+        response = client.responses.create(
+            model=model,
+            temperature=0,
+            input=[
+                {"role": "system", "content": COMPRESSION_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "resume_compression",
+                    "strict": True,
+                    "schema": COMPRESSION_SCHEMA,
+                }
+            },
+        )
+    except Exception as exc:  # pragma: no cover - SDK/network failure path
+        raise ResumeTailoringError(f"OpenAI compression request failed: {exc}") from exc
+
+    content = _extract_output_text(response)
+    LOGGER.debug("Received compression payload: %s", content)
+
+    try:
+        payload = json.loads(content)
+        compression = CompressionResult.model_validate(payload)
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ResumeTailoringError(f"Compression output validation failed: {exc}") from exc
+
+    return _merge_compression(tailoring=tailoring, compression=compression)
 
 
 def _generate_rewritten_resume(
@@ -308,6 +399,51 @@ def _merge_tailoring(
         summary=rewritten_resume.summary,
         experiences=experiences,
         metadata=rewritten_resume.metadata,
+    )
+
+
+def _merge_compression(
+    *,
+    tailoring: TailoredResume,
+    compression: CompressionResult,
+) -> TailoredResume:
+    if len(tailoring.experiences) != len(compression.experiences):
+        raise ResumeTailoringError(
+            "Compression changed the number of experience sections, which is not allowed."
+        )
+
+    experiences: list[TailoredExperience] = []
+    for index, (source, compressed) in enumerate(
+        zip(tailoring.experiences, compression.experiences, strict=True)
+    ):
+        if source.company != compressed.company:
+            raise ResumeTailoringError(
+                f"Compression experience {index} company mismatch: expected '{source.company}', got '{compressed.company}'."
+            )
+
+        if source.role != compressed.role:
+            raise ResumeTailoringError(
+                f"Compression experience {index} role mismatch: expected '{source.role}', got '{compressed.role}'."
+            )
+
+        if len(source.bullets) != len(compressed.bullets):
+            raise ResumeTailoringError(
+                f"Compression experience {index} changed bullet count from {len(source.bullets)} to {len(compressed.bullets)}."
+            )
+
+        experiences.append(
+            TailoredExperience(
+                company=source.company,
+                role=source.role,
+                bullets=compressed.bullets,
+                bullet_order=source.bullet_order,
+            )
+        )
+
+    return TailoredResume(
+        summary=compression.summary,
+        experiences=experiences,
+        metadata=tailoring.metadata,
     )
 
 
