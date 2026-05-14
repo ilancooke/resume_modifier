@@ -341,7 +341,7 @@ def format_dimension_comparison_table(
     ]
     lines = [
         "Resume Match Comparison:",
-        f"Scores are /10 per dimension and /{MATCH_MAX_SCORE} total.",
+        _format_comparison_score_note(),
         _format_table_row(headers, widths),
         _format_table_separator(widths),
     ]
@@ -351,6 +351,15 @@ def format_dimension_comparison_table(
 
 def _scores_by_dimension(report: ResumeMatchReport) -> dict[str, int]:
     return {dimension.name: dimension.score for dimension in report.dimension_scores}
+
+
+def _format_comparison_score_note() -> str:
+    dimension_max_scores = {max_score for _, max_score in MATCH_DIMENSIONS}
+    if len(dimension_max_scores) == 1:
+        dimension_max_score = next(iter(dimension_max_scores))
+        return f"Scores are /{dimension_max_score} per dimension and /{MATCH_MAX_SCORE} total."
+
+    return f"Scores use configured dimension max values and /{MATCH_MAX_SCORE} total."
 
 
 def _format_delta(delta: int) -> str:

@@ -55,25 +55,37 @@ class ResumeMatchReport(BaseModel):
     summary: str
 
 
-DIMENSION_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "name": {"type": "string", "enum": [name for name, _ in MATCH_DIMENSIONS]},
-        "score": {"type": "integer"},
-        "max_score": {"type": "integer"},
-        "rationale": {"type": "string"},
-        "evidence": {"type": "array", "items": {"type": "string"}},
-        "missing_or_weak_signals": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": [
-        "name",
-        "score",
-        "max_score",
-        "rationale",
-        "evidence",
-        "missing_or_weak_signals",
-    ],
+DIMENSION_REQUIRED_FIELDS = [
+    "name",
+    "score",
+    "max_score",
+    "rationale",
+    "evidence",
+    "missing_or_weak_signals",
+]
+
+
+def _dimension_schema(*, name: str, max_score: int) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string", "enum": [name]},
+            "score": {"type": "integer", "enum": list(range(max_score + 1))},
+            "max_score": {"type": "integer", "enum": [max_score]},
+            "rationale": {"type": "string"},
+            "evidence": {"type": "array", "items": {"type": "string"}},
+            "missing_or_weak_signals": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": DIMENSION_REQUIRED_FIELDS,
+    }
+
+
+DIMENSION_SCHEMA: dict[str, Any] = {
+    "anyOf": [
+        _dimension_schema(name=name, max_score=max_score)
+        for name, max_score in MATCH_DIMENSIONS
+    ]
 }
 
 

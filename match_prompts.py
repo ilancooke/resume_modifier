@@ -16,7 +16,11 @@ MATCH_DIMENSIONS = [
 MATCH_MAX_SCORE = sum(max_score for _, max_score in MATCH_DIMENSIONS)
 
 
-SYSTEM_PROMPT = """You evaluate how well a resume matches a job description.
+def _format_dimensions() -> str:
+    return "\n".join(f"- {name}: {max_score} points" for name, max_score in MATCH_DIMENSIONS)
+
+
+SYSTEM_PROMPT = f"""You evaluate how well a resume matches a job description.
 
 You must be evidence-based and job-type agnostic.
 
@@ -32,15 +36,9 @@ Rules:
 - Use concise, plain language.
 
 Scoring dimensions:
-- Required qualifications match: 10 points.
-- Core responsibility alignment: 10 points.
-- Relevant skills and capabilities: 10 points.
-- Industry, domain, and context fit: 10 points.
-- Seniority and scope fit: 10 points.
-- Evidence strength: 10 points.
-- Communication and discoverability: 10 points.
+{_format_dimensions()}
 
-The overall_score must equal the sum of all dimension scores and must be between 0 and 70.
+The overall_score must equal the sum of all dimension scores and must be between 0 and {MATCH_MAX_SCORE}.
 """
 
 
@@ -89,7 +87,3 @@ Resume:
 Job description:
 {job_description}
 """
-
-
-def _format_dimensions() -> str:
-    return "\n".join(f"- {name}: {max_score} points" for name, max_score in MATCH_DIMENSIONS)
