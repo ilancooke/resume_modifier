@@ -1,10 +1,12 @@
-"""Apple Pages PDF export utilities for macOS."""
+"""Microsoft Word PDF export utilities for macOS."""
 
 from __future__ import annotations
 
 import logging
+import os
 import platform
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,7 +14,7 @@ LOGGER = logging.getLogger(__name__)
 
 
 class PdfExportError(RuntimeError):
-    """Raised when the Pages export step fails."""
+    """Raised when the Microsoft Word export step fails."""
 
 
 class PdfLayoutError(RuntimeError):
@@ -21,6 +23,11 @@ class PdfLayoutError(RuntimeError):
 
 MAX_RESUME_PAGES = 2
 TINY_OVERFLOW_WORD_LIMIT = 50
+WORD_EXPORT_TIMEOUT_SECONDS = 1830
+WORD_APPLICATION_PATHS = (
+    Path("/Applications/Microsoft Word.app"),
+    Path.home() / "Applications/Microsoft Word.app",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,22 +48,23 @@ class PdfLayoutCheck:
     def overflow_page_number(self) -> int:
         return self.max_pages + 1
 
+    @property
+    def overflow_page_count(self) -> int:
+        return max(0, self.page_count - self.max_pages)
 
-APPLESCRIPT = r"""
-using terms from application "Pages"
+
+WORD_EXPORT_APPLESCRIPT = r"""
+using terms from application "Microsoft Word"
     on run argv
-        set inputPath to POSIX file (item 1 of argv)
-        set outputFile to POSIX file (item 2 of argv)
-        set targetFileHFSpath to outputFile as text
+        set inputPath to item 1 of argv
+        set outputPath to item 2 of argv
+        set inputFile to POSIX file inputPath
 
-        tell application "Pages"
+        tell application "Microsoft Word"
             with timeout of 1800 seconds
-                activate
-                open inputPath
-                delay 1
-                set docRef to front document
-                export docRef to file targetFileHFSpath as PDF
-                close docRef saving no
+                open inputFile read only true add to recent files false revert true
+                save as active document file name outputPath file format format PDF add to recent files false
+                close active window
             end timeout
         end tell
     end run
@@ -64,33 +72,89 @@ end using terms from
 """
 
 
+def _find_word_application() -> Path | None:
+    """Return the installed Microsoft Word application bundle, if present."""
+
+    return next((path for path in WORD_APPLICATION_PATHS if path.is_dir()), None)
+
+
+def _format_word_export_error(exc: subprocess.CalledProcessError) -> str:
+    """Turn an osascript failure into a useful Word export error."""
+
+    detail = (exc.stderr or "").strip() or (exc.stdout or "").strip() or str(exc)
+    if "-1743" in detail or "not authorized" in detail.lower():
+        return (
+            "Microsoft Word automation was denied. In System Settings, open Privacy & Security > "
+            "Automation and allow your terminal or Python launcher to control Microsoft Word."
+        )
+    return f"Microsoft Word export failed: {detail}"
+
+
 def export_docx_to_pdf(docx_path: str | Path, pdf_path: str | Path) -> Path:
-    """Open a DOCX file in Pages and export it to PDF."""
+    """Open a DOCX file in Microsoft Word and export it to PDF."""
 
     if platform.system() != "Darwin":
-        raise PdfExportError("PDF export requires macOS because it depends on Apple Pages.")
+        raise PdfExportError(
+            "PDF export requires macOS because it automates Microsoft Word for Mac."
+        )
+
+    if _find_word_application() is None:
+        searched_paths = ", ".join(str(path) for path in WORD_APPLICATION_PATHS)
+        raise PdfExportError(
+            f"Microsoft Word is not installed in a supported location. Checked: {searched_paths}"
+        )
 
     docx_path = Path(docx_path).expanduser().resolve()
     pdf_path = Path(pdf_path).expanduser().resolve()
+    if not docx_path.is_file():
+        raise PdfExportError(f"DOCX file not found: {docx_path}")
+    if docx_path.suffix.lower() != ".docx":
+        raise PdfExportError(f"Microsoft Word PDF export expects a .docx file: {docx_path}")
+
     pdf_path.parent.mkdir(parents=True, exist_ok=True)
 
-    LOGGER.info("Exporting %s to PDF via Apple Pages", docx_path)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{pdf_path.stem}_word_", suffix=".pdf", dir=pdf_path.parent
+    )
+    os.close(file_descriptor)
+    temporary_pdf_path = Path(temporary_name)
+    temporary_pdf_path.unlink()
+
+    LOGGER.info("Exporting %s to PDF via Microsoft Word", docx_path)
     try:
         subprocess.run(
-            ["osascript", "-", str(docx_path), str(pdf_path)],
-            input=APPLESCRIPT,
+            ["osascript", "-", str(docx_path), str(temporary_pdf_path)],
+            input=WORD_EXPORT_APPLESCRIPT,
             text=True,
             capture_output=True,
             check=True,
+            timeout=WORD_EXPORT_TIMEOUT_SECONDS,
         )
+    except subprocess.TimeoutExpired as exc:  # pragma: no cover - platform integration path
+        temporary_pdf_path.unlink(missing_ok=True)
+        raise PdfExportError(
+            f"Microsoft Word export timed out after {WORD_EXPORT_TIMEOUT_SECONDS} seconds."
+        ) from exc
     except subprocess.CalledProcessError as exc:  # pragma: no cover - platform integration path
-        stderr = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-        raise PdfExportError(f"Pages export failed: {stderr}") from exc
+        temporary_pdf_path.unlink(missing_ok=True)
+        raise PdfExportError(_format_word_export_error(exc)) from exc
 
-    if not pdf_path.exists():
-        raise PdfExportError(f"Pages reported success, but the PDF was not created: {pdf_path}")
+    try:
+        if not temporary_pdf_path.is_file():
+            raise PdfExportError(
+                "Microsoft Word reported success, but the temporary PDF was not created: "
+                f"{temporary_pdf_path}"
+            )
+        if temporary_pdf_path.stat().st_size == 0:
+            raise PdfExportError(
+                f"Microsoft Word created an empty PDF: {temporary_pdf_path}"
+            )
+        temporary_pdf_path.replace(pdf_path)
+    finally:
+        if temporary_pdf_path.exists():
+            temporary_pdf_path.unlink()
 
-    LOGGER.info("Saved tailored PDF to %s", pdf_path)
+    LOGGER.info("Saved PDF to %s", pdf_path)
     return pdf_path
 
 
@@ -152,8 +216,10 @@ def inspect_resume_pdf_layout(
         overflow_text = ""
         overflow_word_count = 0
         if page_count > max_pages:
-            overflow_page = document.load_page(max_pages)
-            overflow_text = overflow_page.get_text("text", sort=True).strip()
+            overflow_text = "\n\n".join(
+                document.load_page(page_index).get_text("text", sort=True).strip()
+                for page_index in range(max_pages, page_count)
+            ).strip()
             overflow_word_count = len(overflow_text.split())
     finally:
         document.close()

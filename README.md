@@ -1,217 +1,135 @@
 # Resume Modifier
 
-Local Python CLI for tailoring a base resume to a job description, preserving the original `.docx` formatting, and exporting the tailored result to PDF through Apple Pages on macOS.
+Local Python CLI that drafts a job-specific resume from a structured Markdown career history, fills a formatted Word template, exports it to PDF with Microsoft Word for Mac, enforces a two-page limit, and evaluates the finished resume against the job description.
 
-The package also includes a separate read-only workflow for rating how well a PDF resume matches a job description.
-
-## What It Does
+## Workflow
 
 For each run, the tool:
 
-1. Reads a base resume from `.docx`
-2. Reads a job description from raw text
-3. Uses two OpenAI API calls with strict structured output to:
-   - rewrite the summary
-   - rewrite bullets for each role in original source order
-   - choose the final bullet order within each role
-   - extract company name and job ID from the job description for output naming
-4. Updates the copied `.docx` in place without recreating the document
-5. Exports the tailored resume to PDF using Apple Pages
-6. Checks the exported PDF for tiny page-3 spillover and runs a conservative compression pass when needed
-7. Automatically compares the base and tailored PDFs against the job description and prints a dimension-level score table
+1. Recursively reads the configured career-history folder.
+2. Assigns each Markdown file to a fixed resume role from its relative path.
+3. Excludes the root `Template.md` questionnaire from model context.
+4. Asks OpenAI to select the strongest relevant projects and draft the summary and bullets.
+5. Runs a separate OpenAI factuality pass against the original Markdown evidence.
+6. Enforces exact role, bullet-count, and source-attribution requirements locally.
+7. Copies the resume stub and replaces its placeholders without rewriting other DOCX package parts.
+8. Exports the result to PDF through Microsoft Word.
+9. Conservatively compresses the content when necessary to meet the hard two-page limit.
+10. Prints a match report for the tailored resume only.
+
+The generated structure is fixed:
+
+- Summary: approximately 50 words
+- Amazon Data Scientist: exactly 6 bullets, approximately 400 words total
+- Amazon Business Analyst / Business Intelligence Engineer: exactly 3 bullets, approximately 100 words total
+- PetSmart Manager, Business Analytics: exactly 2 bullets, approximately 80 words total
+- PetSmart Customer Insights Analyst: exactly 1 bullet, approximately 50 words total
+
+Exact bullet counts, factual accuracy, and the two-page limit are hard requirements. Word totals are soft targets and may be reduced to make the resume fit cleanly.
 
 ## Requirements
 
 - Python 3.11+
-- macOS with Apple Pages installed
-- `OPENAI_API_KEY` set in the environment or in `.env`
+- macOS with Microsoft Word installed in `/Applications` or `~/Applications`
+- `OPENAI_API_KEY` set in the environment or `.env`
 
-## Install
+The first PDF export may cause macOS to request permission for the terminal or Python launcher to control Microsoft Word. Enable it under **System Settings > Privacy & Security > Automation**. Word must be installed and activated, but it does not need to be open before running the CLI.
 
-If you are using the project virtualenv:
-
-```bash
-./.venv/bin/python -m pip install -e .
-```
-
-Or install dependencies directly into the existing venv:
+## Installation
 
 ```bash
-./.venv/bin/python -m pip install openai pydantic python-dotenv python-docx pymupdf
+source .venv/bin/activate
+python -m pip install -e .
 ```
 
-For the resume match validation workflow, install the package dependencies so PyMuPDF is available:
-
-```bash
-./.venv/bin/python -m pip install -e .
-```
-
-## Environment
-
-Create a `.env` file in the project root:
+Create `.env` in the project root:
 
 ```dotenv
 OPENAI_API_KEY=your_api_key_here
 ```
 
-## Config
+## Configuration
 
-Edit [config.json](/Users/ilan/workspace/resume_modifier/config.json):
+Edit `config.json`:
 
 ```json
 {
-  "base_resume_path": "/Users/ilan/Documents/resumes/base/ilan_cooke_resume.docx",
+  "resume_template_path": "/Users/ilan/Documents/resumes/stub/ilan_cooke_resume_stub.docx",
+  "career_history_dir": "/Users/ilan/Documents/ilan vault/career history",
   "job_description_path": "/Users/ilan/Documents/resumes/job_description/role.txt",
   "tailored_resumes_dir": "/Users/ilan/Documents/resumes/roles"
 }
 ```
 
-### Config Fields
+Career-history assignments are derived from these relative paths:
 
-- `base_resume_path`: default input resume `.docx`
-- `job_description_path`: default input job description `.txt`
-- `tailored_resumes_dir`: base directory where tailored resumes are written
+- `Amazon/Data Scientist/**/*.md`
+- `Amazon/BA-BIE/**/*.md`
+- `Petsmart/PetSmart - Manager, Business Analytics.md`
+- `Petsmart/PetSmart - Customer Insights Analyst.md`
 
-## Default Inputs
+An unrecognized Markdown path is treated as an error so new evidence is not silently assigned to the wrong role.
 
-By default, the CLI reads the input files from `config.json`:
+## Usage
 
-- resume: `/Users/ilan/Documents/resumes/base/ilan_cooke_resume.docx`
-- job description: `/Users/ilan/Documents/resumes/job_description/role.txt`
-
-So the standard command is:
+Standard run:
 
 ```bash
 python tailor_resume.py
 ```
 
-You can still override either input for a one-off run:
+Override inputs:
 
 ```bash
 python tailor_resume.py \
-  --resume /path/to/base_resume.docx \
-  --jd /path/to/role.txt
+  --template /path/to/resume_stub.docx \
+  --career-history /path/to/career_history \
+  --jd /path/to/job_description.txt
 ```
 
-## Output Layout
+Useful options:
 
-The tool creates this structure automatically:
+- `--dry-run`: draft and validate content without writing DOCX or PDF files
+- `--show-diff`: show the placeholder-to-content preview
+- `--model`: choose the OpenAI model; default is `gpt-5.4-mini`
+- `--log-level`: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
 
-- `<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.docx`
-- `<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.pdf`
+## Outputs
 
-Example:
-
-- `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.docx`
-- `/Users/ilan/Documents/resumes/roles/synchrony/ilan_cooke_synchrony_2600857.pdf`
-
-The candidate name is derived from the resume header. The company and job ID used in the output path come from the structured model output and fall back to `unknown` when unavailable.
-
-After export, the workflow checks that the tailored PDF fits within 2 pages. If the resume spills onto page 3 with 50 words or fewer, it asks the model to make the smallest content edits needed to recover roughly 2 to 3 rendered lines, re-applies the compressed content, re-exports the PDF, and checks again. It tries this repair up to 2 times before exiting with the remaining page-3 text.
-
-After a successful run, the terminal also prints a base-vs-tailored match comparison. Each dimension is scored out of 10, and the total is scored out of 70:
+The company and job ID are extracted from the job description:
 
 ```text
-Resume Match Comparison:
-Scores are /10 per dimension and /70 total.
-Dimension                               Base  Tailored  Delta
---------------------------------------  ----  --------  -----
-Required qualifications match              7         8     +1
-Core responsibility alignment              6         8     +2
-Relevant skills and capabilities           8         8      0
-Industry, domain, and context fit          7         8     +1
-Seniority and scope fit                    7         7      0
-Evidence strength                          8         8      0
-Communication and discoverability          5         8     +3
-Total                                     48        55     +7
+<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.docx
+<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.pdf
 ```
 
-## OpenAI Model
+The source template is never modified.
 
-The default model is `gpt-5.4-mini`.
+## Standalone match validation
 
-You can override it:
+Evaluate one PDF without editing it:
 
 ```bash
-python tailor_resume.py --model gpt-5.4-mini
+python validate_resume_match.py --resume /path/to/resume.pdf --jd /path/to/role.txt
 ```
 
-## Useful Flags
-
-- `--dry-run`: generate and validate output without writing the DOCX or PDF
-- `--show-diff`: print a unified diff of the summary and bullet changes
-- `--log-level`: set logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
-
-Examples:
+Batch mode:
 
 ```bash
-python tailor_resume.py --dry-run
-python tailor_resume.py --show-diff
-python tailor_resume.py --log-level DEBUG
-```
-
-## Resume Match Validation
-
-Run this separate read-only workflow to rate how well a PDF resume matches a job description:
-
-```bash
-./.venv/bin/python validate_resume_match.py \
-  --resume /path/to/resume.pdf \
-  --jd /path/to/role.txt
-```
-
-If `--jd` is omitted, the workflow uses `job_description_path` from `config.json`.
-
-The validation workflow:
-
-1. Extracts native text from the resume PDF with PyMuPDF
-2. Uses the OpenAI API with strict structured output to evaluate the match
-3. Prints an overall score, dimension scores, strengths, gaps, knockout risks, and recommended resume changes
-4. Does not edit the resume or export a PDF
-
-Optional JSON output:
-
-```bash
-./.venv/bin/python validate_resume_match.py \
-  --resume /path/to/resume.pdf \
-  --jd /path/to/role.txt \
-  --output-json /path/to/match_report.json
-```
-
-### Batch Match Validation
-
-Run the validator against every PDF resume in a folder:
-
-```bash
-./.venv/bin/python validate_resume_match.py \
+python validate_resume_match.py \
   --resume-dir /path/to/resume_folder \
   --jd /path/to/role.txt \
   --output-dir /path/to/match_reports
 ```
 
-Batch mode writes:
+The validator scores seven dimensions out of 10, for a total of 70:
 
-- one `*.match.json` report per resume
-- `summary.csv`
+- Required qualifications match
+- Core responsibility alignment
+- Relevant skills and capabilities
+- Industry, domain, and context fit
+- Seniority and scope fit
+- Evidence strength
+- Communication and discoverability
 
-The summary CSV is sorted by `overall_score` descending, with failed resumes at the bottom. It includes the resume file, resume path, status, error, total score, rating label, each dimension score, and the final summary as the last column.
-
-### Match Rating Dimensions
-
-The score is job-type agnostic. Each dimension is scored out of 10, for a total of 70 points:
-
-- `Required qualifications match`: 10
-- `Core responsibility alignment`: 10
-- `Relevant skills and capabilities`: 10
-- `Industry, domain, and context fit`: 10
-- `Seniority and scope fit`: 10
-- `Evidence strength`: 10
-- `Communication and discoverability`: 10
-
-The workflow uses native PDF text extraction first. OCR is not implemented yet; if a resume is scanned or image-only, the command reports that the extracted text is likely incomplete.
-
-## Notes
-
-- The tool modifies a copied resume, not the source resume.
-- Formatting is preserved by editing the existing `.docx` structure rather than rebuilding the document.
-- PDF export depends on Apple Pages and only works on macOS.
+PDF text extraction uses PyMuPDF. OCR is not implemented for scanned or image-only resumes.

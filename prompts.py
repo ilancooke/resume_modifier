@@ -1,247 +1,153 @@
-"""Prompt templates for resume tailoring."""
+"""Prompt templates for evidence-based resume drafting and compression."""
 
 from __future__ import annotations
 
 import json
-from typing import Any
 
-REWRITE_SYSTEM_PROMPT = """You rewrite resume content for specific job descriptions.
+from resume_models import ROLE_SPECS, SUMMARY_TARGET_WORDS, TailoredResume
 
-You must follow these rules:
+
+def _role_requirements() -> str:
+    return "\n".join(
+        f"- {spec.role_id}: exactly {spec.bullet_count} bullets; aim for "
+        f"{round(spec.target_words * 0.85)}-{round(spec.target_words * 1.15)} words total "
+        f"(target approximately {spec.target_words})"
+        for spec in ROLE_SPECS
+    )
+
+
+DRAFT_SYSTEM_PROMPT = """You draft a job-targeted resume from detailed career-history evidence.
+
+The career-history files are the only factual authority. Follow their ownership boundaries,
+uncertainty notes, disclosure cautions, and claims requiring caution as hard constraints.
 
 FACTUALITY:
-- Preserve factual accuracy.
-- Do not invent or hallucinate experience, technologies, scope, metrics, titles, employers, dates, ownership, or outcomes.
-- All rewritten content must remain grounded in the original resume.
+- Do not invent or strengthen metrics, scope, ownership, leadership, technologies, dates, titles,
+  causality, financial impact, model performance, or outcomes.
+- Distinguish personal work from team, engineering, product, finance, and operations work.
+- Preserve qualifiers such as estimated, approximate, prototype, or finance-provided when relevant.
+- Every bullet must cite one or more exact relative source paths that directly support all its claims.
+- A role may use only evidence assigned to that role. The summary may synthesize across roles.
 
-STRUCTURE:
-- Keep the same number of experiences as the input.
-- Keep the same number of bullets for each experience as the input.
-- Do NOT drop, combine, split, or add bullets.
-- Echo each experience's company and role exactly as provided.
-- Return each experience's `bullets` in the exact same order as the input bullets.
-- Each rewritten bullet at index N must correspond to the original bullet at index N.
-- Do not reorder bullets in this step.
-- The summary may be substantially rewritten, but it must remain factually grounded in the resume.
+SELECTION AND WRITING:
+- Infer the target job's most important success criteria.
+- Select the strongest supported projects and details for those criteria; omit weaker projects.
+- Prefer quantified accomplishments, consequential decisions, technical specificity, and clear outcomes.
+- Let each bullet cover a coherent accomplishment; avoid repetitive bullets or laundry lists.
+- Return bullets in final display order, strongest and most relevant first.
+- Use concise, direct language and strong but accurate action verbs.
+- In the initial draft, use the requested word ranges to preserve meaningful project detail. Do not
+  preemptively compress for pagination; a later rendered-layout pass handles that if necessary.
+- Do not use the em dash character.
 
-WRITING QUALITY:
-- Preserve important technical specificity, including:
-  - features, signals, and data sources
-  - modeling techniques and constraints
-  - system design details
-  - scale, metrics, and business outcomes
-- Do NOT replace concrete details with generic filler.
-- Do NOT make superficial wording changes just to appear rewritten.
-- Some bullets may remain mostly unchanged if they are already strong and relevant.
-- In the most relevant experience, aim to materially reframe 1 to 3 bullets when doing so improves relevance, clarity, or signal priority.
-- Do not reframe a bullet merely to satisfy a quota; preserve strong bullets when they are already well-aligned.
-- Materially reframed means the emphasis and value proposition clearly change, not just a few words.
-- Reduce redundancy across bullets when possible.
-- Different bullets should emphasize distinct aspects of the work rather than repeating the same project, analysis, model, or system framing.
-- You may tighten wording for clarity, but do not remove important technical or business detail.
+PRIORITIES, IN ORDER:
+1. Factual accuracy and ownership accuracy.
+2. Exact role and bullet structure.
+3. A polished resume that fits within two pages after conservative compression if needed.
+4. Approximate word-count targets.
 
-STYLE:
-- Use strong but accurate action verbs such as: Owned, Built, Designed, Developed, Deployed, Implemented.
-- Do not introduce stronger leadership claims than supported by the original resume.
-- Do not use the em dash character (—).
-
-OUTPUT GOAL:
-Produce a resume that is more relevant to the target role because the most important matching signals are clearer and more prominent, not because job-description keywords were mechanically inserted.
-
-JOB METADATA EXTRACTION:
-- Extract:
-  - company_name
-  - job_id
-- These fields are used only for naming the generated output files.
-- Use only information grounded in the job description.
-- If a field is not available, return "unknown".
+JOB METADATA:
+- Extract company_name and job_id only from the job description for output naming.
+- Return "unknown" when either value is unavailable.
 """
 
 
-def build_rewrite_prompt(*, full_resume_text: str, editable_resume: dict[str, Any], job_description: str) -> str:
-    """Build the user prompt for the rewrite-only request."""
+FACT_CHECK_SYSTEM_PROMPT = """You are the factuality editor for a generated resume.
 
-    editable_json = json.dumps(editable_resume, indent=2, ensure_ascii=True)
+Compare every summary and bullet claim against the supplied career-history evidence. Correct or
+remove anything unsupported, overstated, assigned to the wrong role, missing a necessary qualifier,
+or inconsistent with an ownership/disclosure caution. Preserve strong supported specificity.
 
-    return f"""Rewrite the editable resume content to the job description.
+Also repair exact role and bullet counts, role metadata, source-file attribution, ordering, and word
+targets. Expand an undersized role with additional supported detail rather than generic filler. Do not
+preemptively shorten the draft for pagination. Every bullet must cite exact relative source paths
+assigned to its role. The summary may cite sources from any role. Return the full corrected draft,
+even if no correction was necessary. Do not use the em dash character.
+"""
 
-This is a relevance and clarity task, not a keyword-matching task.
 
-Follow this process:
+COMPRESSION_SYSTEM_PROMPT = """You conservatively shorten a completed resume so its Microsoft Word
+render fits within two pages.
 
-1. Identify the 3 to 5 most important signals in the job description.
-2. Find the strongest evidence for those signals in the resume.
-3. Rewrite bullets so those signals are clearer while keeping each bullet mapped to its original index.
+- Preserve factual accuracy, role relevance, and the existing bullet order.
+- Keep exactly the same roles and exactly the same number of bullets per role.
+- Do not add facts, metrics, technologies, ownership, or outcomes.
+- Make deletion and tightening edits only; do not replace supported claims with new claims.
+- Preserve the most important quantified evidence and job-relevant details.
+- Prefer shortening the summary and longest bullets and removing redundant setup language.
+- Do not use the em dash character.
+"""
 
-Task requirements:
-- Keep the same number of bullets per role.
-- Do not drop, combine, split, or add bullets.
-- Keep bullets in the exact same order as the input.
-- Each rewritten bullet must remain grounded in the original bullet at the same index.
-- In the most relevant experience, aim to materially reframe 1 to 3 bullets when doing so improves relevance, clarity, or signal priority.
-- Do not reframe a bullet merely to satisfy a quota; preserve strong bullets when they are already well-aligned.
-- Prefer stronger framing around decisions enabled, business impact, tradeoffs, experimentation, analytics, or system outcomes when supported by the resume.
-- Avoid repeating the same project, analysis, model, or system framing across multiple bullets.
 
-Signal prioritization:
-- Infer the role's primary success criteria from the job description instead of assuming a fixed role category.
-- Prioritize required qualifications, core responsibilities, and repeated themes over preferred or incidental keywords.
-- Favor resume evidence that directly supports the target role's main outcomes, scope, tools, domain, stakeholders, or operating environment.
-- If the job description is vague, prioritize broadly transferable evidence such as measurable outcomes, technical depth, ownership, collaboration, and communication.
+def build_draft_prompt(*, career_history_context: str, job_description: str) -> str:
+    """Build the initial evidence-selection and drafting request."""
 
-Final self-check before answering:
-- Are the most important role signals clearer in the summary and rewritten bullets?
-- Were bullets materially reframed only when doing so improved relevance, clarity, or signal priority?
-- Does the output feel meaningfully more tailored, rather than lightly reworded?
-- Did every rewritten bullet remain mapped to the original bullet at the same index?
+    return f"""Create the tailored resume content for this job description.
 
-Return a JSON object with:
-- `summary`
-- `experiences`
-- `metadata`
+Hard structure and drafting targets:
+- Summary: aim for 43-58 words (target approximately {SUMMARY_TARGET_WORDS})
+{_role_requirements()}
+- Return roles in the exact order shown above.
+- Echo each role's company and role name exactly as defined in the evidence headers.
 
-Each item in `experiences` must contain:
-- `company`
-- `role`
-- `bullets`
+For each bullet, return:
+- `text`: final resume bullet text without a bullet glyph
+- `source_files`: exact relative path(s) from the evidence supporting every claim
 
-Base resume text for context:
-{full_resume_text}
+Return `summary_source_files` using exact relative paths as well.
 
-Editable resume content:
-{editable_json}
+Career-history evidence:
+{career_history_context}
 
 Job description:
 {job_description}
 """
 
 
-BULLET_ORDER_SYSTEM_PROMPT = """You order rewritten resume bullets for a specific job description.
-
-You must follow these rules:
-
-- Do not rewrite, edit, add, remove, combine, or split bullets.
-- Return only the final bullet order for each experience.
-- `bullet_order` must be a zero-based permutation of the rewritten bullet indexes for that experience.
-- Because rewritten bullets are kept in original source order, each index also corresponds to the original source bullet at the same index.
-- Echo each experience's company and role exactly as provided.
-- Reorder bullets only when it improves signal priority.
-- Keep the original order when it already presents the strongest evidence first.
-- The first 2 to 3 bullets in the most relevant experience should prioritize the strongest supported matches to the role.
-- The first bullet in the most relevant experience should emphasize the strongest supported match to one of the role's most important signals.
-"""
-
-
-def build_bullet_order_prompt(
-    *,
-    editable_resume: dict[str, Any],
-    rewritten_resume: dict[str, Any],
-    job_description: str,
+def build_fact_check_prompt(
+    *, career_history_context: str, job_description: str, draft: TailoredResume
 ) -> str:
-    """Build the user prompt for the order-only request."""
+    """Build the independent grounding and repair request."""
 
-    editable_json = json.dumps(editable_resume, indent=2, ensure_ascii=True)
-    rewritten_json = json.dumps(rewritten_resume, indent=2, ensure_ascii=True)
+    draft_json = json.dumps(draft.model_dump(), indent=2, ensure_ascii=True)
+    return f"""Audit and, where necessary, correct this generated resume draft.
 
-    return f"""Choose the final display order for each experience's rewritten bullets.
+Required structure and drafting targets:
+- Summary: aim for 43-58 words (target approximately {SUMMARY_TARGET_WORDS})
+{_role_requirements()}
 
-This is an ordering-only task. Do not rewrite any bullet text.
+Generated draft:
+{draft_json}
 
-Use this process:
-
-1. Infer the role's primary success criteria from the job description.
-2. Compare those criteria against the rewritten bullets.
-3. Return the bullet indexes in the order they should appear in the tailored resume.
-
-Ordering guidance:
-- Prioritize required qualifications, core responsibilities, and repeated themes over preferred or incidental keywords.
-- Favor bullets that directly support the target role's main outcomes, scope, tools, domain, stakeholders, or operating environment.
-- When multiple signals are important, order bullets so the strongest supported matches appear first.
-- If the job description is vague, prioritize broadly transferable evidence such as measurable outcomes, technical depth, ownership, collaboration, and communication.
-- Preserve original order when reordering would not improve signal priority.
-
-Indexing:
-- Use zero-based indexes in `bullet_order`.
-- If the final order should be original bullets 3, 1, 2, return `bullet_order`: [2, 0, 1].
-
-Return a JSON object with:
-- `experiences`
-
-Each item in `experiences` must contain:
-- `company`
-- `role`
-- `bullet_order`
-
-Original editable resume content:
-{editable_json}
-
-Rewritten resume content, with bullets still in original source order:
-{rewritten_json}
+Career-history evidence:
+{career_history_context}
 
 Job description:
 {job_description}
-"""
-
-
-COMPRESSION_SYSTEM_PROMPT = """You conservatively compress already-tailored resume content to fix a tiny PDF overflow.
-
-You must follow these rules:
-
-FACTUALITY:
-- Preserve factual accuracy.
-- Do not invent or hallucinate experience, technologies, scope, metrics, titles, employers, dates, ownership, or outcomes.
-- Do not remove important metrics, tools, employers, roles, dates, or major outcomes.
-
-STRUCTURE:
-- Keep the same number of experiences as the input.
-- Keep the same number of bullets for each experience as the input.
-- Do NOT drop, combine, split, add, or reorder bullets.
-- Echo each experience's company and role exactly as provided.
-- Return each experience's `bullets` in the exact same order as the input bullets.
-
-COMPRESSION:
-- Make the smallest edits needed to recover approximately 2 to 3 rendered lines of space.
-- Prefer tightening the summary and the longest bullets.
-- Do not shorten every bullet.
-- Prefer removing redundant phrasing, filler, and repeated setup language over removing evidence.
-- Preserve the tailored role relevance and signal priority.
-- Do not use the em dash character (—).
 """
 
 
 def build_compression_prompt(
-    *,
-    tailored_resume: dict[str, Any],
-    overflow_text: str,
-    overflow_word_count: int,
-    attempt: int,
+    *, tailoring: TailoredResume, overflow_text: str, overflow_word_count: int, attempt: int
 ) -> str:
-    """Build the user prompt for a tiny-overflow compression pass."""
+    """Build a request to recover enough space to meet the hard two-page limit."""
 
-    tailored_json = json.dumps(tailored_resume, indent=2, ensure_ascii=True)
+    tailored_json = json.dumps(tailoring.model_dump(), indent=2, ensure_ascii=True)
+    return f"""Shorten this resume enough to fit within two rendered pages.
 
-    return f"""Compress the tailored resume content just enough to resolve a tiny page overflow.
+Compression attempt: {attempt}
+Extracted text beyond page 2: {overflow_word_count} words
 
-The exported PDF spilled onto page 3 with {overflow_word_count} word(s).
-
-Page 3 overflow text:
+Overflow text:
 {overflow_text or "[no extractable text]"}
 
-This is compression attempt {attempt}.
+Keep the exact role order and bullet counts:
+{_role_requirements()}
 
-Goal:
-- Recover approximately 2 to 3 rendered lines of space.
-- Make the smallest content edits that are likely to fit the resume on 2 pages.
-
-Return a JSON object with:
+Return only:
 - `summary`
-- `experiences`
+- `roles`, each containing `role_id` and its ordered `bullets` as strings
 
-Each item in `experiences` must contain:
-- `company`
-- `role`
-- `bullets`
-
-Tailored resume content to compress:
+Resume to shorten:
 {tailored_json}
 """

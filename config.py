@@ -13,7 +13,8 @@ CONFIG_PATH = Path(__file__).resolve().with_name("config.json")
 class AppConfig:
     """User-editable application configuration."""
 
-    base_resume_path: Path
+    resume_template_path: Path
+    career_history_dir: Path
     job_description_path: Path
     tailored_resumes_dir: Path
 
@@ -33,10 +34,16 @@ def load_config(path: Path | None = None) -> AppConfig:
     except json.JSONDecodeError as exc:
         raise ConfigError(f"Config file is not valid JSON: {config_path}") from exc
 
-    base_resume_path = payload.get("base_resume_path")
-    if not isinstance(base_resume_path, str) or not base_resume_path.strip():
+    resume_template_path = payload.get("resume_template_path", payload.get("base_resume_path"))
+    if not isinstance(resume_template_path, str) or not resume_template_path.strip():
         raise ConfigError(
-            "Config file must define a non-empty string for 'base_resume_path'."
+            "Config file must define a non-empty string for 'resume_template_path'."
+        )
+
+    career_history_dir = payload.get("career_history_dir")
+    if not isinstance(career_history_dir, str) or not career_history_dir.strip():
+        raise ConfigError(
+            "Config file must define a non-empty string for 'career_history_dir'."
         )
 
     job_description_path = payload.get("job_description_path")
@@ -52,7 +59,8 @@ def load_config(path: Path | None = None) -> AppConfig:
         )
 
     return AppConfig(
-        base_resume_path=Path(base_resume_path).expanduser().resolve(),
+        resume_template_path=Path(resume_template_path).expanduser().resolve(),
+        career_history_dir=Path(career_history_dir).expanduser().resolve(),
         job_description_path=Path(job_description_path).expanduser().resolve(),
         tailored_resumes_dir=Path(output_dir).expanduser().resolve(),
     )

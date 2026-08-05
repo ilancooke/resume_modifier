@@ -1,4 +1,4 @@
-"""OpenAI client wrapper for structured resume tailoring output."""
+"""OpenAI client for evidence-based resume drafting and compression."""
 
 from __future__ import annotations
 
@@ -7,107 +7,87 @@ import logging
 import os
 from typing import Any
 
+from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
-from dotenv import load_dotenv
 
 from prompts import (
-    BULLET_ORDER_SYSTEM_PROMPT,
     COMPRESSION_SYSTEM_PROMPT,
-    REWRITE_SYSTEM_PROMPT,
-    build_bullet_order_prompt,
+    DRAFT_SYSTEM_PROMPT,
+    FACT_CHECK_SYSTEM_PROMPT,
     build_compression_prompt,
-    build_rewrite_prompt,
+    build_draft_prompt,
+    build_fact_check_prompt,
+)
+from resume_models import (
+    EvidenceBullet,
+    ROLE_SPECS,
+    TailoredResume,
+    TailoredRole,
 )
 
 LOGGER = logging.getLogger(__name__)
 
 
 class ResumeTailoringError(RuntimeError):
-    """Raised when the OpenAI API request or response is invalid."""
+    """Raised when a drafting request or structured response is invalid."""
 
 
-class TailoredExperience(BaseModel):
-    """Tailored content for a single experience."""
+class CompressedRole(BaseModel):
+    """Shortened bullet text for one role."""
 
-    company: str
-    role: str
+    role_id: str
     bullets: list[str]
-    bullet_order: list[int]
-
-
-class JobMetadata(BaseModel):
-    """Structured job metadata used for naming tailored outputs."""
-
-    company_name: str
-    job_id: str
-
-
-class RewrittenExperience(BaseModel):
-    """Rewritten bullets for one experience, kept in original source order."""
-
-    company: str
-    role: str
-    bullets: list[str]
-
-
-class RewrittenResume(BaseModel):
-    """Structured result from the rewrite-only model call."""
-
-    summary: str
-    experiences: list[RewrittenExperience]
-    metadata: JobMetadata
-
-
-class BulletOrderExperience(BaseModel):
-    """Final bullet order for a single experience."""
-
-    company: str
-    role: str
-    bullet_order: list[int]
-
-
-class BulletOrderPlan(BaseModel):
-    """Structured result from the order-only model call."""
-
-    experiences: list[BulletOrderExperience]
 
 
 class CompressionResult(BaseModel):
-    """Compressed tailored content that preserves existing ordering metadata."""
+    """Shortened visible content with unchanged resume structure."""
 
     summary: str
-    experiences: list[RewrittenExperience]
+    roles: list[CompressedRole]
 
 
-class TailoredResume(BaseModel):
-    """Structured result returned by the model."""
+EVIDENCE_BULLET_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "text": {"type": "string"},
+        "source_files": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["text", "source_files"],
+}
 
-    summary: str
-    experiences: list[TailoredExperience]
-    metadata: JobMetadata
+
+def _tailored_role_schema(spec) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "role_id": {"type": "string", "enum": [spec.role_id]},
+            "company": {"type": "string", "enum": [spec.company]},
+            "role": {"type": "string", "enum": [spec.role]},
+            "bullets": {
+                "type": "array",
+                "items": EVIDENCE_BULLET_SCHEMA,
+                "minItems": spec.bullet_count,
+                "maxItems": spec.bullet_count,
+            },
+        },
+        "required": ["role_id", "company", "role", "bullets"],
+    }
 
 
-REWRITTEN_RESUME_SCHEMA: dict[str, Any] = {
+TAILORED_RESUME_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "summary": {"type": "string"},
-        "experiences": {
+        "summary_source_files": {"type": "array", "items": {"type": "string"}},
+        "roles": {
             "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "company": {"type": "string"},
-                    "role": {"type": "string"},
-                    "bullets": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["company", "role", "bullets"],
-            },
+            "items": {"anyOf": [_tailored_role_schema(spec) for spec in ROLE_SPECS]},
+            "minItems": len(ROLE_SPECS),
+            "maxItems": len(ROLE_SPECS),
         },
         "metadata": {
             "type": "object",
@@ -116,97 +96,83 @@ REWRITTEN_RESUME_SCHEMA: dict[str, Any] = {
                 "company_name": {"type": "string"},
                 "job_id": {"type": "string"},
             },
-            "required": [
-                "company_name",
-                "job_id",
-            ],
+            "required": ["company_name", "job_id"],
         },
     },
-    "required": ["summary", "experiences", "metadata"],
+    "required": ["summary", "summary_source_files", "roles", "metadata"],
 }
-
-
-BULLET_ORDER_SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "properties": {
-        "experiences": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "company": {"type": "string"},
-                    "role": {"type": "string"},
-                    "bullet_order": {
-                        "type": "array",
-                        "items": {"type": "integer"},
-                    },
-                },
-                "required": ["company", "role", "bullet_order"],
-            },
-        },
-    },
-    "required": ["experiences"],
-}
-
 
 COMPRESSION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "summary": {"type": "string"},
-        "experiences": {
+        "roles": {
             "type": "array",
             "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "properties": {
-                    "company": {"type": "string"},
-                    "role": {"type": "string"},
-                    "bullets": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                },
-                "required": ["company", "role", "bullets"],
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "role_id": {"type": "string", "enum": [spec.role_id]},
+                            "bullets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": spec.bullet_count,
+                                "maxItems": spec.bullet_count,
+                            },
+                        },
+                        "required": ["role_id", "bullets"],
+                    }
+                    for spec in ROLE_SPECS
+                ]
             },
+            "minItems": len(ROLE_SPECS),
+            "maxItems": len(ROLE_SPECS),
         },
     },
-    "required": ["summary", "experiences"],
+    "required": ["summary", "roles"],
 }
 
 
 def generate_tailored_resume(
     *,
-    full_resume_text: str,
-    editable_resume: dict[str, Any],
+    career_history_context: str,
+    allowed_sources_by_role: dict[str, set[str]],
     job_description: str,
     model: str = "gpt-5.4-mini",
 ) -> TailoredResume:
-    """Generate rewritten resume content and a separate bullet ordering plan."""
+    """Draft, fact-check, validate, and normalize tailored resume content."""
 
-    load_dotenv()
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ResumeTailoringError("OPENAI_API_KEY is not set.")
+    client = _create_client()
+    draft = _request_tailored_resume(
+        client=client,
+        model=model,
+        system_prompt=DRAFT_SYSTEM_PROMPT,
+        user_prompt=build_draft_prompt(
+            career_history_context=career_history_context,
+            job_description=job_description,
+        ),
+        request_name="resume draft",
+    )
 
-    client = OpenAI(api_key=api_key)
-    rewritten_resume = _generate_rewritten_resume(
+    LOGGER.info("Requesting independent resume factuality review from OpenAI model %s", model)
+    audited = _request_tailored_resume(
         client=client,
-        full_resume_text=full_resume_text,
-        editable_resume=editable_resume,
-        job_description=job_description,
         model=model,
+        system_prompt=FACT_CHECK_SYSTEM_PROMPT,
+        user_prompt=build_fact_check_prompt(
+            career_history_context=career_history_context,
+            job_description=job_description,
+            draft=draft,
+        ),
+        request_name="resume factuality review",
     )
-    bullet_order_plan = _generate_bullet_order_plan(
-        client=client,
-        editable_resume=editable_resume,
-        rewritten_resume=rewritten_resume,
-        job_description=job_description,
-        model=model,
+    return validate_and_normalize_tailoring(
+        tailoring=audited,
+        allowed_sources_by_role=allowed_sources_by_role,
     )
-    return _merge_tailoring(rewritten_resume=rewritten_resume, bullet_order_plan=bullet_order_plan)
 
 
 def compress_tailored_resume(
@@ -217,257 +183,226 @@ def compress_tailored_resume(
     attempt: int,
     model: str = "gpt-5.4-mini",
 ) -> TailoredResume:
-    """Compress tailored content enough to resolve a tiny PDF overflow."""
+    """Shorten visible content while preserving evidence and exact bullet structure."""
 
-    load_dotenv()
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise ResumeTailoringError("OPENAI_API_KEY is not set.")
-
-    client = OpenAI(api_key=api_key)
+    client = _create_client()
     prompt = build_compression_prompt(
-        tailored_resume=tailoring.model_dump(),
+        tailoring=tailoring,
         overflow_text=overflow_text,
         overflow_word_count=overflow_word_count,
         attempt=attempt,
     )
-
-    LOGGER.info("Requesting tiny-overflow compression from OpenAI model %s", model)
+    LOGGER.info("Requesting two-page compression from OpenAI model %s", model)
+    content = _request_json(
+        client=client,
+        model=model,
+        system_prompt=COMPRESSION_SYSTEM_PROMPT,
+        user_prompt=prompt,
+        schema_name="resume_compression",
+        schema=COMPRESSION_SCHEMA,
+        request_name="resume compression",
+    )
     try:
-        response = client.responses.create(
-            model=model,
-            temperature=0,
-            input=[
-                {"role": "system", "content": COMPRESSION_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "resume_compression",
-                    "strict": True,
-                    "schema": COMPRESSION_SCHEMA,
-                }
-            },
-        )
-    except Exception as exc:  # pragma: no cover - SDK/network failure path
-        raise ResumeTailoringError(f"OpenAI compression request failed: {exc}") from exc
-
-    content = _extract_output_text(response)
-    LOGGER.debug("Received compression payload: %s", content)
-
-    try:
-        payload = json.loads(content)
-        compression = CompressionResult.model_validate(payload)
+        compression = CompressionResult.model_validate(json.loads(content))
     except (json.JSONDecodeError, ValidationError) as exc:
         raise ResumeTailoringError(f"Compression output validation failed: {exc}") from exc
-
     return _merge_compression(tailoring=tailoring, compression=compression)
 
 
-def _generate_rewritten_resume(
-    *,
-    client: OpenAI,
-    full_resume_text: str,
-    editable_resume: dict[str, Any],
-    job_description: str,
-    model: str,
-) -> RewrittenResume:
-    prompt = build_rewrite_prompt(
-        full_resume_text=full_resume_text,
-        editable_resume=editable_resume,
-        job_description=job_description,
-    )
-
-    LOGGER.info("Requesting rewritten resume content from OpenAI model %s", model)
-    try:
-        response = client.responses.create(
-            model=model,
-            temperature=0,
-            input=[
-                {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "resume_rewrite",
-                    "strict": True,
-                    "schema": REWRITTEN_RESUME_SCHEMA,
-                }
-            },
-        )
-    except Exception as exc:  # pragma: no cover - SDK/network failure path
-        raise ResumeTailoringError(f"OpenAI rewrite request failed: {exc}") from exc
-
-    content = _extract_output_text(response)
-    LOGGER.debug("Received rewrite payload: %s", content)
-
-    try:
-        payload = json.loads(content)
-        return RewrittenResume.model_validate(payload)
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise ResumeTailoringError(f"Rewrite output validation failed: {exc}") from exc
-
-
-def _generate_bullet_order_plan(
-    *,
-    client: OpenAI,
-    editable_resume: dict[str, Any],
-    rewritten_resume: RewrittenResume,
-    job_description: str,
-    model: str,
-) -> BulletOrderPlan:
-    prompt = build_bullet_order_prompt(
-        editable_resume=editable_resume,
-        rewritten_resume=rewritten_resume.model_dump(),
-        job_description=job_description,
-    )
-
-    LOGGER.info("Requesting bullet ordering plan from OpenAI model %s", model)
-    try:
-        response = client.responses.create(
-            model=model,
-            temperature=0,
-            input=[
-                {"role": "system", "content": BULLET_ORDER_SYSTEM_PROMPT},
-                {"role": "user", "content": prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "resume_bullet_order",
-                    "strict": True,
-                    "schema": BULLET_ORDER_SCHEMA,
-                }
-            },
-        )
-    except Exception as exc:  # pragma: no cover - SDK/network failure path
-        raise ResumeTailoringError(f"OpenAI bullet ordering request failed: {exc}") from exc
-
-    content = _extract_output_text(response)
-    LOGGER.debug("Received bullet ordering payload: %s", content)
-
-    try:
-        payload = json.loads(content)
-        return BulletOrderPlan.model_validate(payload)
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise ResumeTailoringError(f"Bullet ordering output validation failed: {exc}") from exc
-
-
-def _merge_tailoring(
-    *,
-    rewritten_resume: RewrittenResume,
-    bullet_order_plan: BulletOrderPlan,
+def validate_and_normalize_tailoring(
+    *, tailoring: TailoredResume, allowed_sources_by_role: dict[str, set[str]]
 ) -> TailoredResume:
-    if len(rewritten_resume.experiences) != len(bullet_order_plan.experiences):
+    """Enforce exact role structure and evidence attribution locally."""
+
+    if not tailoring.summary.strip():
+        raise ResumeTailoringError("Generated summary is empty.")
+    if "—" in tailoring.summary:
+        raise ResumeTailoringError("Generated summary contains a prohibited em dash.")
+
+    all_sources = set().union(*allowed_sources_by_role.values())
+    summary_sources = set(tailoring.summary_source_files)
+    if not summary_sources:
+        raise ResumeTailoringError("Generated summary does not cite any career-history source.")
+    invalid_summary_sources = summary_sources - all_sources
+    if invalid_summary_sources:
         raise ResumeTailoringError(
-            "Bullet ordering changed the number of experience sections, which is not allowed."
+            "Generated summary cites unknown source file(s): "
+            + ", ".join(sorted(invalid_summary_sources))
         )
 
-    experiences: list[TailoredExperience] = []
-    for index, (rewritten, ordered) in enumerate(
-        zip(rewritten_resume.experiences, bullet_order_plan.experiences, strict=True)
-    ):
-        if rewritten.company != ordered.company:
-            raise ResumeTailoringError(
-                f"Bullet ordering experience {index} company mismatch: expected '{rewritten.company}', got '{ordered.company}'."
-            )
+    roles_by_id: dict[str, TailoredRole] = {}
+    for role in tailoring.roles:
+        if role.role_id in roles_by_id:
+            raise ResumeTailoringError(f"Generated duplicate role: {role.role_id}")
+        roles_by_id[role.role_id] = role
 
-        if rewritten.role != ordered.role:
-            raise ResumeTailoringError(
-                f"Bullet ordering experience {index} role mismatch: expected '{rewritten.role}', got '{ordered.role}'."
-            )
-
-        expected_order = set(range(len(rewritten.bullets)))
-        generated_order = set(ordered.bullet_order)
-        if generated_order != expected_order or len(ordered.bullet_order) != len(rewritten.bullets):
-            raise ResumeTailoringError(
-                f"Bullet ordering experience {index} must be a permutation of 0..{len(rewritten.bullets) - 1}."
-            )
-
-        experiences.append(
-            TailoredExperience(
-                company=rewritten.company,
-                role=rewritten.role,
-                bullets=rewritten.bullets,
-                bullet_order=ordered.bullet_order,
-            )
+    expected_ids = {spec.role_id for spec in ROLE_SPECS}
+    if set(roles_by_id) != expected_ids:
+        missing = sorted(expected_ids - set(roles_by_id))
+        extra = sorted(set(roles_by_id) - expected_ids)
+        raise ResumeTailoringError(
+            f"Generated role set is invalid. Missing: {missing or 'none'}; extra: {extra or 'none'}."
         )
 
-    return TailoredResume(
-        summary=rewritten_resume.summary,
-        experiences=experiences,
-        metadata=rewritten_resume.metadata,
+    normalized_roles: list[TailoredRole] = []
+    for spec in ROLE_SPECS:
+        role = roles_by_id[spec.role_id]
+        if role.company != spec.company or role.role != spec.role:
+            raise ResumeTailoringError(
+                f"{spec.role_id} metadata mismatch; expected {spec.company!r} / {spec.role!r}."
+            )
+        if len(role.bullets) != spec.bullet_count:
+            raise ResumeTailoringError(
+                f"{spec.role_id} requires exactly {spec.bullet_count} bullets, "
+                f"got {len(role.bullets)}."
+            )
+
+        allowed_sources = allowed_sources_by_role.get(spec.role_id, set())
+        for bullet_index, bullet in enumerate(role.bullets, start=1):
+            if not bullet.text.strip():
+                raise ResumeTailoringError(
+                    f"{spec.role_id} bullet {bullet_index} is empty."
+                )
+            if "—" in bullet.text:
+                raise ResumeTailoringError(
+                    f"{spec.role_id} bullet {bullet_index} contains a prohibited em dash."
+                )
+            cited_sources = set(bullet.source_files)
+            if not cited_sources:
+                raise ResumeTailoringError(
+                    f"{spec.role_id} bullet {bullet_index} has no evidence source."
+                )
+            invalid_sources = cited_sources - allowed_sources
+            if invalid_sources:
+                raise ResumeTailoringError(
+                    f"{spec.role_id} bullet {bullet_index} cites source(s) assigned to another role "
+                    f"or not found: {', '.join(sorted(invalid_sources))}"
+                )
+        normalized_roles.append(role)
+
+    return tailoring.model_copy(update={"roles": normalized_roles})
+
+
+def _request_tailored_resume(
+    *,
+    client: OpenAI,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    request_name: str,
+) -> TailoredResume:
+    content = _request_json(
+        client=client,
+        model=model,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        schema_name="tailored_resume",
+        schema=TAILORED_RESUME_SCHEMA,
+        request_name=request_name,
     )
+    try:
+        return TailoredResume.model_validate(json.loads(content))
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ResumeTailoringError(f"{request_name.capitalize()} validation failed: {exc}") from exc
+
+
+def _request_json(
+    *,
+    client: OpenAI,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    schema_name: str,
+    schema: dict[str, Any],
+    request_name: str,
+) -> str:
+    LOGGER.info("Requesting %s from OpenAI model %s", request_name, model)
+    try:
+        response = client.responses.create(
+            model=model,
+            temperature=0,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+        )
+    except Exception as exc:  # pragma: no cover - SDK/network failure path
+        raise ResumeTailoringError(f"OpenAI {request_name} request failed: {exc}") from exc
+    content = _extract_output_text(response)
+    LOGGER.debug("Received %s payload: %s", request_name, content)
+    return content
+
+
+def _create_client() -> OpenAI:
+    load_dotenv()
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ResumeTailoringError("OPENAI_API_KEY is not set.")
+    return OpenAI(api_key=api_key)
 
 
 def _merge_compression(
-    *,
-    tailoring: TailoredResume,
-    compression: CompressionResult,
+    *, tailoring: TailoredResume, compression: CompressionResult
 ) -> TailoredResume:
-    if len(tailoring.experiences) != len(compression.experiences):
-        raise ResumeTailoringError(
-            "Compression changed the number of experience sections, which is not allowed."
-        )
+    compressed_by_id = {role.role_id: role for role in compression.roles}
+    if len(compressed_by_id) != len(compression.roles):
+        raise ResumeTailoringError("Compression returned duplicate role IDs.")
 
-    experiences: list[TailoredExperience] = []
-    for index, (source, compressed) in enumerate(
-        zip(tailoring.experiences, compression.experiences, strict=True)
-    ):
-        if source.company != compressed.company:
+    merged_roles: list[TailoredRole] = []
+    for spec, source_role in zip(ROLE_SPECS, tailoring.roles, strict=True):
+        compressed_role = compressed_by_id.get(spec.role_id)
+        if compressed_role is None:
+            raise ResumeTailoringError(f"Compression omitted role: {spec.role_id}")
+        if len(compressed_role.bullets) != spec.bullet_count:
             raise ResumeTailoringError(
-                f"Compression experience {index} company mismatch: expected '{source.company}', got '{compressed.company}'."
+                f"Compression changed {spec.role_id} bullet count from {spec.bullet_count} "
+                f"to {len(compressed_role.bullets)}."
             )
 
-        if source.role != compressed.role:
-            raise ResumeTailoringError(
-                f"Compression experience {index} role mismatch: expected '{source.role}', got '{compressed.role}'."
+        bullets = []
+        for index, (source_bullet, compressed_text) in enumerate(
+            zip(source_role.bullets, compressed_role.bullets, strict=True), start=1
+        ):
+            text = compressed_text.strip()
+            if not text:
+                raise ResumeTailoringError(
+                    f"Compression emptied {spec.role_id} bullet {index}."
+                )
+            if "—" in text:
+                raise ResumeTailoringError(
+                    f"Compression introduced an em dash in {spec.role_id} bullet {index}."
+                )
+            bullets.append(
+                EvidenceBullet(text=text, source_files=source_bullet.source_files)
             )
+        merged_roles.append(source_role.model_copy(update={"bullets": bullets}))
 
-        if len(source.bullets) != len(compressed.bullets):
-            raise ResumeTailoringError(
-                f"Compression experience {index} changed bullet count from {len(source.bullets)} to {len(compressed.bullets)}."
-            )
+    summary = compression.summary.strip()
+    if not summary:
+        raise ResumeTailoringError("Compression emptied the summary.")
+    if "—" in summary:
+        raise ResumeTailoringError("Compression introduced an em dash in the summary.")
 
-        experiences.append(
-            TailoredExperience(
-                company=source.company,
-                role=source.role,
-                bullets=compressed.bullets,
-                bullet_order=source.bullet_order,
-            )
-        )
-
-    return TailoredResume(
-        summary=compression.summary,
-        experiences=experiences,
-        metadata=tailoring.metadata,
-    )
+    return tailoring.model_copy(update={"summary": summary, "roles": merged_roles})
 
 
 def _extract_output_text(response: Any) -> str:
-    """Extract text content from a Responses API object."""
-
     output_text = getattr(response, "output_text", None)
     if output_text:
         return output_text
 
-    output = getattr(response, "output", None) or []
-    for item in output:
+    for item in getattr(response, "output", None) or []:
         for content in getattr(item, "content", None) or []:
-            content_type = getattr(content, "type", None)
-            if content_type == "refusal":
-                refusal = getattr(content, "refusal", None) or "The model refused the request."
-                raise ResumeTailoringError(refusal)
-
-            if content_type in {"output_text", "text"}:
+            if getattr(content, "type", None) in {"output_text", "text"}:
                 text = getattr(content, "text", None)
-                if isinstance(text, str) and text:
+                if text:
                     return text
-                value = getattr(text, "value", None)
-                if isinstance(value, str) and value:
-                    return value
-
-    raise ResumeTailoringError("No structured text output was returned by the OpenAI API.")
+    raise ResumeTailoringError("OpenAI response did not contain text output.")
