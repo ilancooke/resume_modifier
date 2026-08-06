@@ -91,7 +91,7 @@ Useful options:
 
 - `--dry-run`: draft and validate content without writing DOCX or PDF files
 - `--show-diff`: show the placeholder-to-content preview
-- `--model`: choose the OpenAI model; default is `gpt-5.4-mini`
+- `--model`: choose the OpenAI model; default is `gpt-5.6-sol`
 - `--log-level`: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
 
 ## Outputs

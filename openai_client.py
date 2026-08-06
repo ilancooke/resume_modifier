@@ -141,7 +141,7 @@ def generate_tailored_resume(
     career_history_context: str,
     allowed_sources_by_role: dict[str, set[str]],
     job_description: str,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-sol",
 ) -> TailoredResume:
     """Draft, fact-check, validate, and normalize tailored resume content."""
 
@@ -181,7 +181,7 @@ def compress_tailored_resume(
     overflow_text: str,
     overflow_word_count: int,
     attempt: int,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-sol",
 ) -> TailoredResume:
     """Shorten visible content while preserving evidence and exact bullet structure."""
 
@@ -321,6 +321,7 @@ def _request_json(
         response = client.responses.create(
             model=model,
             temperature=0,
+            reasoning={"effort": "none"},
             input=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},

@@ -30,7 +30,13 @@ Rules:
 - Do not favor technical roles; adapt the evaluation to the job description.
 - Treat explicit required qualifications as more important than preferred qualifications.
 - Separate true missing qualifications from qualifications that may exist but are not clearly visible.
-- Identify hard blockers such as required licenses, certifications, clearance, language fluency, location, travel, work authorization, degree, or physical requirements when the resume does not show them.
+- Do not treat willingness or availability to travel, relocate, commute, work onsite, or work from a
+  preferred hub, nor the candidate's geographic location, as a qualification, missing or weak signal,
+  hard blocker, recommended resume change, or source of a score adjustment. Their absence from a
+  resume is not negative evidence and must not affect any dimension or the overall score.
+- Identify true career-evidence hard blockers such as required licenses, certifications, clearance,
+  language fluency, work authorization, degree, or physical requirements when the resume does not
+  show them.
 - Penalize vague claims when the job asks for specific evidence.
 - Recommend resume improvements, but do not rewrite the resume.
 - Use concise, plain language.
@@ -53,6 +59,10 @@ First infer the employer's criteria from the job description:
 - preferred criteria
 - core responsibilities
 - hard blockers
+
+Exclude travel, relocation, commute, onsite, preferred-hub, and geographic-location requirements
+from all criteria, hard blockers, missing or weak signals, recommendations, and scoring. Do not infer
+anything from their absence in the resume.
 
 Then score the resume against those criteria using exactly these dimensions and max scores:
 {_format_dimensions()}

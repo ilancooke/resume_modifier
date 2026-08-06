@@ -150,7 +150,7 @@ def generate_resume_match_report(
     *,
     resume_text: str,
     job_description: str,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-sol",
 ) -> ResumeMatchReport:
     """Generate a structured resume-to-job match report from the OpenAI API."""
 
@@ -170,6 +170,7 @@ def generate_resume_match_report(
         response = client.responses.create(
             model=model,
             temperature=0,
+            reasoning={"effort": "none"},
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},

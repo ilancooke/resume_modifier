@@ -66,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.4-mini",
+        default="gpt-5.6-sol",
         help="OpenAI model used for drafting, factual review, compression, and match validation.",
     )
     parser.add_argument(
