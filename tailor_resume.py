@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
+import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from career_history import CareerHistory, CareerHistoryError, load_career_history
@@ -77,7 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--show-diff",
         action="store_true",
-        help="Print a unified placeholder-to-content preview.",
+        help="Include a unified placeholder-to-content preview in the diagnostics file.",
     )
     parser.add_argument(
         "--log-level",
@@ -139,11 +142,9 @@ def main() -> int:
             metadata=metadata,
         )
 
-        print(format_content_report(tailoring))
-        if args.show_diff or args.dry_run:
-            print(build_diff_preview(template, tailoring))
-
         if args.dry_run:
+            print(format_content_report(tailoring))
+            print(build_diff_preview(template, tailoring))
             LOGGER.info("Dry run complete. No files were written.")
             return 0
 
@@ -163,12 +164,50 @@ def main() -> int:
             tailoring=tailoring,
             model=args.model,
         )
-        print(
-            run_tailored_match_validation(
+        diagnostics_output_path = derive_diagnostics_path(
+            base_dir=config.resume_diagnostics_dir,
+            metadata=metadata,
+        )
+        try:
+            match_report = run_tailored_match_validation(
                 tailored_pdf_path=pdf_output_path,
                 job_description=job_description,
                 model=args.model,
             )
+        except Exception as exc:
+            write_diagnostics_file(
+                output_path=diagnostics_output_path,
+                content=format_diagnostics_report(
+                    tailoring=tailoring,
+                    template=template,
+                    metadata=metadata,
+                    model=args.model,
+                    docx_output_path=docx_output_path,
+                    pdf_output_path=pdf_output_path,
+                    match_report=(
+                        "Tailored Resume Match:\n"
+                        f"Match validation failed: {exc}"
+                    ),
+                    include_diff=args.show_diff,
+                ),
+            )
+            LOGGER.info(
+                "Saved diagnostics with match-validation failure to %s",
+                diagnostics_output_path,
+            )
+            raise
+        write_diagnostics_file(
+            output_path=diagnostics_output_path,
+            content=format_diagnostics_report(
+                tailoring=tailoring,
+                template=template,
+                metadata=metadata,
+                model=args.model,
+                docx_output_path=docx_output_path,
+                pdf_output_path=pdf_output_path,
+                match_report=match_report,
+                include_diff=args.show_diff,
+            ),
         )
     except (
         OSError,
@@ -185,6 +224,7 @@ def main() -> int:
 
     print(f"DOCX: {docx_output_path}")
     print(f"PDF:  {pdf_output_path}")
+    print(f"Diagnostics: {diagnostics_output_path}")
     return 0
 
 
@@ -282,10 +322,70 @@ def format_content_report(tailoring: TailoredResume) -> str:
     return "\n".join(lines).rstrip()
 
 
+def format_diagnostics_report(
+    *,
+    tailoring: TailoredResume,
+    template: ResumeTemplate,
+    metadata: RoleMetadata,
+    model: str,
+    docx_output_path: Path,
+    pdf_output_path: Path,
+    match_report: str,
+    include_diff: bool,
+) -> str:
+    """Combine generated-content evidence and match feedback for one resume run."""
+
+    lines = [
+        "Tailored Resume Diagnostics",
+        f"Generated: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+        f"Model: {model}",
+        f"Candidate: {metadata.candidate_slug}",
+        f"Company: {metadata.company_slug}",
+        f"Job ID: {metadata.role_number_slug}",
+        f"DOCX: {docx_output_path}",
+        f"PDF: {pdf_output_path}",
+        "",
+        format_content_report(tailoring),
+    ]
+    if include_diff:
+        lines.extend(["", "Placeholder-to-content diff:", build_diff_preview(template, tailoring)])
+    lines.extend(["", match_report.strip()])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_diagnostics_file(*, output_path: Path, content: str) -> Path:
+    """Atomically write a completed diagnostics report alongside generated resumes."""
+
+    output_path = output_path.expanduser().resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{output_path.stem}_",
+        suffix=".tmp",
+        dir=output_path.parent,
+        text=True,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        temporary_path.replace(output_path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
+    return output_path
+
+
 def derive_output_paths(*, base_dir: Path, metadata: RoleMetadata) -> tuple[Path, Path]:
     company_dir = base_dir / metadata.company_slug
     file_stem = f"{metadata.candidate_slug}_{metadata.company_slug}_{metadata.role_number_slug}"
     return company_dir / f"{file_stem}.docx", company_dir / f"{file_stem}.pdf"
+
+
+def derive_diagnostics_path(*, base_dir: Path, metadata: RoleMetadata) -> Path:
+    """Return the per-resume diagnostics file path."""
+
+    file_stem = f"{metadata.candidate_slug}_{metadata.company_slug}_{metadata.role_number_slug}"
+    return base_dir / f"{file_stem}.diagnostics.txt"
 
 
 def enrich_role_metadata(

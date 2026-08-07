@@ -17,6 +17,7 @@ class AppConfig:
     career_history_dir: Path
     job_description_path: Path
     tailored_resumes_dir: Path
+    resume_diagnostics_dir: Path
 
 
 class ConfigError(RuntimeError):
@@ -58,9 +59,16 @@ def load_config(path: Path | None = None) -> AppConfig:
             "Config file must define a non-empty string for 'tailored_resumes_dir'."
         )
 
+    diagnostics_dir = payload.get("resume_diagnostics_dir")
+    if not isinstance(diagnostics_dir, str) or not diagnostics_dir.strip():
+        raise ConfigError(
+            "Config file must define a non-empty string for 'resume_diagnostics_dir'."
+        )
+
     return AppConfig(
         resume_template_path=Path(resume_template_path).expanduser().resolve(),
         career_history_dir=Path(career_history_dir).expanduser().resolve(),
         job_description_path=Path(job_description_path).expanduser().resolve(),
         tailored_resumes_dir=Path(output_dir).expanduser().resolve(),
+        resume_diagnostics_dir=Path(diagnostics_dir).expanduser().resolve(),
     )

@@ -25,6 +25,9 @@ FACTUALITY:
 - Do not invent or strengthen metrics, scope, ownership, leadership, technologies, dates, titles,
   causality, financial impact, model performance, or outcomes.
 - Distinguish personal work from team, engineering, product, finance, and operations work.
+- Clarify another team's ownership only when necessary to avoid materially overstating the
+  candidate's contribution. Do not describe systems, implementation work, or responsibilities owned
+  by other teams unless essential to explain the candidate's role, a key dependency, or the outcome.
 - Preserve qualifiers such as estimated, approximate, prototype, or finance-provided when relevant.
 - Every bullet must cite one or more exact relative source paths that directly support all its claims.
 - A role may use only evidence assigned to that role. The summary may synthesize across roles.
@@ -116,6 +119,10 @@ FACT_CHECK_SYSTEM_PROMPT = """You are the factuality and job-fit editor for a ge
 Compare every summary and bullet claim against the supplied career-history evidence. Correct or
 remove anything unsupported, overstated, assigned to the wrong role, missing a necessary qualifier,
 or inconsistent with an ownership/disclosure caution. Preserve strong supported specificity.
+
+Clarify another team's ownership only when necessary to prevent a material attribution error. Remove
+unrelated descriptions of systems, implementation work, or responsibilities owned by other teams
+unless they are essential to explain the candidate's role, a key dependency, or the outcome.
 
 Independently reconstruct the target role's primary function, domain, seniority, likely hiring
 audience, and main success criteria from the job description. Do not inherit the initial draft's

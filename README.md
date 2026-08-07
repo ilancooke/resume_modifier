@@ -103,6 +103,12 @@ The company and job ID are extracted from the job description:
 <tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.pdf
 ```
 
+Each completed run also writes its evidence-attribution, optional diff, and tailored-match report to:
+
+```text
+<resume_diagnostics_dir>/<candidate>_<company>_<job_id>.diagnostics.txt
+```
+
 The source template is never modified.
 
 ## Standalone match validation
