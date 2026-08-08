@@ -11,21 +11,23 @@ For each run, the tool:
 3. Excludes the root `Template.md` questionnaire from model context.
 4. Asks OpenAI to select the strongest relevant projects and draft the summary and bullets.
 5. Runs a separate OpenAI factuality pass against the original Markdown evidence.
-6. Enforces exact role, bullet-count, and source-attribution requirements locally.
+6. Enforces role identity, maximum bullet counts, and source-attribution requirements locally.
 7. Copies the resume stub and replaces its placeholders without rewriting other DOCX package parts.
 8. Exports the result to PDF through Microsoft Word.
 9. Conservatively compresses the content when necessary to meet the hard two-page limit.
 10. Prints a match report for the tailored resume only.
 
-The generated structure is fixed:
+The generated structure prioritizes the strongest nonredundant evidence:
 
-- Summary: approximately 50 words
-- Amazon Data Scientist: exactly 6 bullets, approximately 400 words total
-- Amazon Business Analyst / Business Intelligence Engineer: exactly 3 bullets, approximately 100 words total
-- PetSmart Manager, Business Analytics: exactly 2 bullets, approximately 80 words total
-- PetSmart Customer Insights Analyst: exactly 1 bullet, approximately 50 words total
+- Summary: up to approximately 45 words
+- Amazon Data Scientist: prefer about 5 bullets; maximum 6
+- Amazon Business Analyst / Business Intelligence Engineer: prefer about 3 bullets; maximum 3
+- PetSmart Manager, Business Analytics: prefer about 2 bullets; maximum 2
+- PetSmart Customer Insights Analyst: prefer about 1 bullet; maximum 1
 
-Exact bullet counts, factual accuracy, and the two-page limit are hard requirements. Word totals are soft targets and may be reduced to make the resume fit cleanly.
+The two-page limit, factuality, correct role history, and maximum bullet counts are hard constraints.
+Preferred bullet counts and word ceilings are guides, not quotas: the workflow may use fewer bullets
+when another accomplishment would not strengthen the resume.
 
 ## Requirements
 
@@ -91,7 +93,7 @@ Useful options:
 
 - `--dry-run`: draft and validate content without writing DOCX or PDF files
 - `--show-diff`: show the placeholder-to-content preview
-- `--model`: choose the OpenAI model; default is `gpt-5.6-sol`
+- `--model`: choose the OpenAI model; default is `gpt-5.6-terra`
 - `--log-level`: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
 
 ## Outputs

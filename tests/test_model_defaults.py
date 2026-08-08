@@ -11,11 +11,11 @@ from tailor_resume import parse_args as parse_tailor_args
 from validate_resume_match import parse_args as parse_match_args
 
 
-DEFAULT_MODEL = "gpt-5.6-sol"
+DEFAULT_MODEL = "gpt-5.6-terra"
 
 
 class ModelDefaultTests(unittest.TestCase):
-    def test_callable_defaults_use_gpt_5_6_sol(self) -> None:
+    def test_callable_defaults_use_gpt_5_6_terra(self) -> None:
         for function in (
             generate_tailored_resume,
             compress_tailored_resume,
@@ -23,7 +23,7 @@ class ModelDefaultTests(unittest.TestCase):
         ):
             self.assertEqual(inspect.signature(function).parameters["model"].default, DEFAULT_MODEL)
 
-    def test_cli_defaults_use_gpt_5_6_sol(self) -> None:
+    def test_cli_defaults_use_gpt_5_6_terra(self) -> None:
         with patch.object(sys, "argv", ["tailor_resume.py"]):
             self.assertEqual(parse_tailor_args().model, DEFAULT_MODEL)
         with patch.object(sys, "argv", ["validate_resume_match.py", "--resume", "resume.pdf"]):

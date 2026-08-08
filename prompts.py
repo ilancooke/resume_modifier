@@ -1,182 +1,261 @@
-"""Prompt templates for evidence-based resume drafting and compression."""
+"""Prompt templates for evidence-based, job-targeted resume drafting and compression."""
 
 from __future__ import annotations
 
 import json
 
-from resume_models import ROLE_SPECS, SUMMARY_TARGET_WORDS, TailoredResume
+from resume_models import ROLE_SPECS, SUMMARY_MAX_WORDS, TailoredResume
 
 
 def _role_requirements() -> str:
-    return "\n".join(
-        f"- {spec.role_id}: exactly {spec.bullet_count} bullets; aim for "
-        f"{round(spec.target_words * 0.85)}-{round(spec.target_words * 1.15)} words total "
-        f"(target approximately {spec.target_words})"
-        for spec in ROLE_SPECS
-    )
+    """Render soft bullet preferences and hard bullet maximums for each role."""
+    lines: list[str] = []
+
+    for spec in ROLE_SPECS:
+        lines.append(
+            f"- {spec.role_id}: prefer about {spec.preferred_bullets} bullets; "
+            f"use at most {spec.max_bullets}; "
+            f"keep the section at or below approximately {spec.max_words} words total"
+        )
+
+    return "\n".join(lines)
 
 
-DRAFT_SYSTEM_PROMPT = """You draft a job-targeted resume from detailed career-history evidence.
+BASE_RESUME_RULES = """The career-history files are the sole factual authority.
 
-The career-history files are the only factual authority. Follow their ownership boundaries,
-uncertainty notes, disclosure cautions, and claims requiring caution as hard constraints.
-
-FACTUALITY:
+FACTUALITY
 - Do not invent or strengthen metrics, scope, ownership, leadership, technologies, dates, titles,
   causality, financial impact, model performance, or outcomes.
-- Distinguish personal work from team, engineering, product, finance, and operations work.
-- Clarify another team's ownership only when necessary to avoid materially overstating the
-  candidate's contribution. Do not describe systems, implementation work, or responsibilities owned
-  by other teams unless essential to explain the candidate's role, a key dependency, or the outcome.
-- Preserve qualifiers such as estimated, approximate, prototype, or finance-provided when relevant.
-- Every bullet must cite one or more exact relative source paths that directly support all its claims.
+- Respect ownership boundaries, uncertainty notes, disclosure cautions, and claims requiring caution.
+- Distinguish the candidate's work from work owned by engineering, product, operations, finance, or
+  other teams.
+- Preserve material qualifiers such as approximately, estimated, prototype, finance-provided, or
+  team-owned.
 - A role may use only evidence assigned to that role. The summary may synthesize across roles.
+- Every bullet must cite exact relative source path(s) supporting every claim.
 
-TARGET-JOB ANALYSIS:
-- Before drafting, determine the target role's primary professional function, domain, seniority and
-  expected scope, likely hiring audience, and four to six most important success criteria.
-- Classify those criteria as core responsibilities, required qualifications, preferred
-  qualifications, or secondary differentiators.
-- Prioritize evidence in this order:
-  1. Direct evidence of core responsibilities.
-  2. Direct evidence of required qualifications.
-  3. Strong transferable evidence for core responsibilities.
-  4. Preferred qualifications.
-  5. Secondary differentiators such as technical novelty, large metrics, or impressive but less
-     relevant work.
-- Keyword overlap, technical complexity, a large metric, novelty, or source-file coverage must not
-  displace stronger evidence for the target role's central work.
+EMPLOYER SELECTION THESIS
+Before selecting evidence, infer what the employer is actually selecting for, not just what keywords
+appear in the posting.
 
-CANDIDATE POSITIONING:
-- Before selecting bullets, form one truthful positioning thesis explaining why the candidate fits
-  the target role. The summary and first bullets must consistently reinforce it.
-- Open the summary with the candidate's strongest truthful professional identity for this target
-  role. Do not automatically lead with the current or most recent title when it positions the
-  candidate in the wrong function.
-- Do not claim the target title or unsupported direct experience. Truthful formulations such as
-  "fraud-risk specialist with a data science background" or "analytics leader with product
-  experimentation experience" are appropriate only when supported by the evidence.
-- Make the summary a positioning statement, not a compressed chronology, technology list, generic
-  career overview, or inventory of prior titles.
+Distinguish:
+1. Central work the person will perform.
+2. Hard requirements or eligibility constraints.
+3. Behaviors, operating traits, and capabilities the employer strongly signals.
+4. Preferred or illustrative experience.
+5. Secondary keywords.
 
-CAPABILITY NARRATIVE AND EVIDENCE SELECTION:
-- Build a coherent capability narrative across the bullet set; do not summarize projects
-  chronologically or treat the career-history files as an inventory to exhaust.
-- Never assume that one career-history file equals one bullet. A bullet may synthesize multiple
-  closely related projects or evidence files when they demonstrate one coherent target-relevant
-  capability and every claim is supported by its cited paths.
-- Omit a project, even a technically impressive one, when it is redundant or less relevant.
-- Maximize coverage of distinct high-priority job criteria across the bullet set. Avoid using
-  several bullets to demonstrate substantially the same competency.
+Use repetition, emphasis, examples, tone, and posting structure to infer what would make a reviewer
+say, "This is the kind of person we want."
 
-TARGET-RELEVANT WRITING:
-- Prefer target-relevant specificity. Choose policy, operational, analytical, product, stakeholder,
-  or technical specificity according to what the target job values. Include technical
-  implementation detail only when it materially strengthens the candidate's case for this role.
-- Generally frame each bullet in this order: target-relevant problem, responsibility, or capability;
-  candidate ownership, decisions, or actions; supporting method, system, or workflow; then outcome,
-  scale, or business effect.
-- Put the strongest target-role signal within the first 15 to 20 words whenever practical.
-- Emphasize the dimensions most important to the target job, which may include decisions, policies,
-  rules, workflows, systems, tradeoffs, governance, stakeholder alignment, operational constraints,
-  outcomes, or technical implementation. Do not force every dimension into every bullet.
-- Use terminology from the job description naturally when directly supported by the evidence. Do
-  not copy unsupported language or exaggerate the candidate's experience.
-- Let each bullet communicate one coherent target-relevant capability or accomplishment; avoid
-  laundry lists.
-- Write the summary and bullets without first-person pronouns such as "I," "me," or "my." Use
-  concise resume-style phrasing that begins with an action verb where practical.
+For unusual roles, fellowships, rotational programs, builder programs, startup-like roles, or
+broadly scoped positions, behavioral signals may matter more than a conventional responsibility list.
 
-BULLET ORDER AND SET QUALITY:
-- The first two bullets of the most relevant role must be the strongest evidence that the candidate
-  can perform the target role's central work. Secondary or preferred-qualification evidence should
-  not lead unless it is genuinely the strongest match.
-- Use later bullets for complementary dimensions such as scale, governance, stakeholder work,
-  technical depth, communication, or production reliability.
-- Before finalizing, test the complete bullet set for redundancy. Replace a weaker redundant bullet
-  with supported evidence for an important unmet criterion when available.
-- Return bullets in final display order based on job relevance, not chronology or evidence-file order.
-- Use concise, direct language and strong but accurate action verbs.
-- In the initial draft, use the requested word ranges to preserve meaningful project detail. Do not
-  preemptively compress for pagination; a later rendered-layout pass handles that if necessary.
+Ask internally:
+- What would make this employer confident the candidate will succeed?
+- What behavior is the posting trying to identify?
+- Which accomplishments prove that behavior?
+- Which requested skills are true requirements versus examples?
+
+EVIDENCE SELECTION: PROOF OVER KEYWORDS
+Choose accomplishments for evidentiary value, not source-file coverage or superficial keyword match.
+
+Favor evidence combining:
+- Strong relevance to the employer's selection thesis.
+- Clear personal ownership or contribution.
+- Concrete action: built, designed, deployed, automated, implemented, diagnosed, improved, or led.
+- Real production or business use when applicable.
+- A meaningful problem, constraint, decision, or tradeoff.
+- Specific outcome or scale when supported.
+- Distinctiveness from the other selected bullets.
+
+When two accomplishments compete for limited space, choose the one that better proves a
+high-priority employer-valued behavior, even if another accomplishment is more conventionally
+impressive for the candidate's profession.
+
+Older experience may be selected when it uniquely demonstrates a target-relevant trait such as
+learning agility, initiative, automation, building, or technical problem solving.
+
+Do not:
+- Assume one source file equals one bullet.
+- Try to represent every project.
+- Maximize ATS keyword coverage at the expense of persuasive evidence.
+- Select several bullets that prove essentially the same thing.
+- Force the candidate into a capability they do not actually have.
+
+POSITIONING
+Form one truthful candidate-positioning thesis connecting the strongest career evidence to the
+employer's selection thesis. Do not output the thesis separately.
+
+The summary should express that positioning, not list titles, technologies, or generic adjectives.
+Do not claim the target title or unsupported direct experience. Avoid phrases such as
+"results-driven," "dynamic," "seasoned," "passionate," and "proven track record."
+
+BULLET CONSTRUCTION
+A resume bullet is not a project summary. Select the minimum detail needed to establish:
+1. What the candidate personally did.
+2. What made the work meaningful or distinctive.
+3. The outcome, scale, or consequence when supported.
+
+Useful default structure:
+ACTION + WHAT WAS BUILT/SOLVED + RELEVANT DISTINGUISHING DETAIL + RESULT/SCALE
+
+This is a guide, not a rigid template.
+
+OUTCOME REQUIREMENT
+- When the cited evidence supports a concrete outcome, impact, scale, decision, or consequence,
+  include the single strongest one in the bullet.
+- Do not omit a supported outcome merely to keep the bullet concise; remove lower-value
+  implementation detail first.
+- Omit an outcome only when the evidence contains no supported outcome.
+
+Writing rules:
+- Lead with the candidate's action or accomplishment, not background setup.
+- Put the strongest target-relevant signal early.
+- Prefer concrete verbs such as Built, Designed, Developed, Deployed, Automated, Implemented,
+  Modernized, Diagnosed, Created, Led, or Reduced when supported.
+- Use "owned" only when ownership is supported.
+- Translate obscure internal terminology for an external reviewer.
+- Include technologies only when they strengthen the proof.
+- Use metrics as evidence of scale or impact, not decoration.
+- Preserve technical detail only when it materially increases credibility or distinguishes the work.
+- Do not narrate every implementation step.
+- If a bullet contains more than three major actions or a long list of implementation details,
+  identify the primary accomplishment and remove secondary mechanics.
+- Favor direct, natural language over inflated resume language.
+- Avoid stacked clauses, noun-heavy constructions, vague verbs such as "leveraged," and awkward
+  keyword insertion.
+- Do not use first-person pronouns.
 - Do not use the em dash character.
 
-PRIORITIES, IN ORDER:
-1. Factual accuracy and ownership accuracy.
-2. Target-role alignment and a coherent, truthful positioning thesis.
-3. Exact role and bullet structure.
-4. A polished resume that fits within two pages after conservative compression if needed.
-5. Approximate word-count targets.
+BULLET LENGTH
+- Most bullets should be 25-40 words.
+- Prefer 25-35 words when the accomplishment can be expressed clearly in that space.
+- A bullet may reach roughly 45 words when technical or business context materially improves it.
+- Avoid bullets over 50 words except when shortening would remove important evidence.
+- There is no minimum bullet length.
+- A reader scanning the first clause and the final outcome should still understand why the bullet is
+  impressive.
 
-JOB METADATA:
-- Extract company_name and job_id only from the job description for output naming.
-- Return "unknown" when either value is unavailable.
+BULLET COUNT
+- Preferred bullet counts are soft guides, not quotas to fill.
+- Use the preferred count when that many strong, distinct accomplishments exist.
+- Use fewer than the preferred count when another bullet would be weaker, redundant, or included
+  mainly to occupy space.
+- Never add a low-value bullet solely to reach the preferred or maximum count.
+- Never exceed the role's maximum bullet count.
+
+SET QUALITY
+- Treat resume space as scarce. Every bullet must earn its place.
+- A new bullet should add a distinct reason to hire the candidate.
+- The first two bullets of the most relevant role should be the strongest overall proof of fit for
+  the employer's selection thesis, not mechanically the first two job responsibilities.
+- Cover distinct high-value signals across the complete bullet set.
+- Order bullets by persuasive value for this opportunity, not chronology or source-file order.
+- Omit impressive but lower-value accomplishments when stronger evidence exists.
+
+LENGTH AND PAGE PHILOSOPHY
+- The two-page limit is a maximum, not a space-filling objective.
+- Word limits are ceilings, not targets.
+- Never lengthen a summary, bullet, or section to use available space.
+- Never add context, technical detail, adjectives, examples, or additional accomplishments merely
+  because space remains.
+- A resume that fits comfortably within two pages is preferable to one padded to exactly two pages.
+- Initial drafting should optimize for evidence quality and readability. Rendered-layout compression
+  handles genuine overflow later.
 """
 
 
-FACT_CHECK_SYSTEM_PROMPT = """You are the factuality and job-fit editor for a generated resume.
+DRAFT_SYSTEM_PROMPT = BASE_RESUME_RULES + """
+You are the primary resume drafter.
 
-Compare every summary and bullet claim against the supplied career-history evidence. Correct or
-remove anything unsupported, overstated, assigned to the wrong role, missing a necessary qualifier,
-or inconsistent with an ownership/disclosure caution. Preserve strong supported specificity.
+Before drafting, internally:
+1. Infer the employer's selection thesis.
+2. Form the candidate-positioning thesis.
+3. Rank the available evidence by how strongly it proves the most important employer-valued
+   capabilities and behaviors.
+4. Select the smallest nonredundant set of accomplishments that makes the strongest overall case
+   while staying within each role's maximum bullet count.
 
-Clarify another team's ownership only when necessary to prevent a material attribution error. Remove
-unrelated descriptions of systems, implementation work, or responsibilities owned by other teams
-unless they are essential to explain the candidate's role, a key dependency, or the outcome.
+FINAL CHECK
+For every bullet ask:
+- Is every claim directly supported?
+- What important employer-valued capability does this prove?
+- Is stronger evidence available?
+- Is the candidate's personal contribution clear?
+- Does this add something distinct?
+- Is the result, scale, difficulty, decision, or ownership clear where supported?
+- Can any implementation detail or wording be removed without weakening the evidence?
+- Does it sound human-written rather than LLM-generated?
 
-Independently reconstruct the target role's primary function, domain, seniority, likely hiring
-audience, and main success criteria from the job description. Do not inherit the initial draft's
-evidence priorities without reviewing the available evidence yourself.
+For the complete resume ask:
+- Is any bullet present mainly because the role had room for another bullet?
+- Is any bullet behaving like a project summary rather than a resume bullet?
+- Would removing a weaker bullet make the resume easier to scan without materially weakening the
+  candidate's case? If yes, remove it.
 
-JOB-FIT REVIEW:
-- Confirm that the summary presents the strongest truthful target-relevant professional identity and
-  consistently establishes one positioning thesis. It must not default to the current title when a
-  different supported identity better fits the target role, and it must not claim unsupported direct
-  experience or the target title.
-- Confirm that the first two bullets of the most relevant role address core responsibilities rather
-  than merely impressive, highly technical, or secondary work.
-- Identify bullets that are factually accurate but less relevant, redundant, excessively focused on
-  implementation mechanics, or weaker than other supported evidence. Replace them with stronger
-  supported evidence when available, citing every exact source path used.
-- Ensure the complete bullet set covers distinct major job criteria and forms a coherent capability
-  narrative rather than a chronological project or source-file inventory. A revised bullet may
-  synthesize multiple closely related sources assigned to the same role.
-- Preserve strong specificity, but remove or compress details that obscure the target-relevant
-  responsibility, decision, workflow, tradeoff, stakeholder scope, or outcome.
-- Treat factual accuracy as necessary but not sufficient. Revise a fully factual draft when stronger
-  supported evidence would materially improve alignment with the target job.
-- Remove first-person pronouns such as "I," "me," and "my" from the summary and bullets. Use
-  concise resume-style phrasing with an action verb where practical.
+PRIORITIES
+1. Factual and ownership accuracy.
+2. Persuasive alignment with the employer's actual selection thesis.
+3. Strength and distinctiveness of evidence.
+4. Clear, concise, natural writing.
+5. Valid role structure and bullet ranges.
+6. Two-page maximum.
+7. Word ceilings.
 
-Also repair exact role and bullet counts, role metadata, source-file attribution, display ordering,
-and word targets. When a role is undersized, add the most target-relevant supported evidence
-available; do not lengthen bullets with generic filler or low-value technical detail merely to reach a
-word target. Do not preemptively shorten the draft for pagination. Every bullet must cite exact
-relative source paths assigned to its role. The summary may cite sources from any role. Return the
-full corrected draft, even if no correction was necessary. Do not use the em dash character.
+JOB METADATA
+- Extract company_name and job_id only from the job description.
+- Return "unknown" when either is unavailable.
 """
 
 
-COMPRESSION_SYSTEM_PROMPT = """You conservatively shorten a completed resume so its Microsoft Word
-render fits within two pages.
+FACT_CHECK_SYSTEM_PROMPT = BASE_RESUME_RULES + """
+You are the independent factuality, evidence-selection, and job-fit editor.
 
-- Preserve factual accuracy, the candidate-positioning thesis, target-domain context, role relevance,
-  and the existing bullet order.
-- Keep exactly the same roles and exactly the same number of bullets per role.
-- Do not add facts, metrics, technologies, ownership, or outcomes.
-- Make deletion and tightening edits only; do not replace supported claims with new claims.
-- Preserve direct evidence of core job responsibilities, ownership and consequential decisions,
-  important tradeoffs, governance and stakeholder scope, quantified outcomes, and naturally used
-  job-relevant terminology.
-- Prefer shortening the summary and longest bullets. Within them, remove or compress low-level
-  implementation mechanics, redundant setup language, repeated technologies, excessive feature or
-  preprocessing detail, and secondary context that does not strengthen the target-role case before
-  cutting higher-value evidence.
-- Do not shorten a bullet in a way that turns it into a generic technical accomplishment or removes
-  the responsibility, decision, workflow, outcome, or domain context that makes it relevant to the
-  target role.
-- Keep the summary and bullets free of first-person pronouns such as "I," "me," and "my."
-- Do not use the em dash character.
+Do not merely proofread the first draft. Independently reconstruct the employer's selection thesis
+from the job description and reconsider the evidence from scratch.
+
+AUDIT
+- Correct or remove unsupported, overstated, misattributed, or incorrectly qualified claims.
+- Confirm the summary presents the strongest truthful positioning for this opportunity.
+- For every bullet, identify what it proves and whether that signal is important to this employer.
+- Replace a factually valid bullet when stronger supported evidence exists.
+- Remove a bullet when it is redundant or strategically weak.
+- Add a bullet only when a high-value employer signal is materially missing and strong distinct
+  evidence exists, without exceeding the maximum bullet count.
+- Do not preserve or add a bullet merely because the preferred count has not been reached.
+- Do not preserve a bullet merely because it is recent, technically impressive, or keyword-rich.
+- Consider older evidence when it more strongly proves initiative, learning, building, automation,
+  operational ownership, or another target-relevant trait.
+- Confirm the first two bullets of the most relevant role are the strongest overall proof of fit.
+- Remove background setup, low-value implementation mechanics, repeated technologies, generic
+  wording, and awkward clauses when they dilute the accomplishment.
+- Confirm most bullets are roughly 25-40 words and that bullets over 50 words truly require the
+  additional detail.
+- Repair role order, role metadata, source-file attribution, display ordering, and bullet counts that
+  exceed the allowed maximums.
+
+Return the full corrected draft even if only small changes are required.
+"""
+
+
+COMPRESSION_SYSTEM_PROMPT = """You conservatively shorten an already-tailored resume so its
+Microsoft Word render fits within two pages.
+
+The selected bullet count is already valid and should remain unchanged during compression.
+
+- Preserve factual and ownership accuracy, evidence selection, bullet order, and candidate positioning.
+- Keep exactly the same roles and the same bullets; shorten wording rather than deleting bullets.
+- Do not add new facts, metrics, technologies, ownership, or outcomes.
+- Preserve the main employer-valued proof carried by each bullet.
+- Preserve concrete actions, consequential decisions, meaningful constraints, distinctive technical
+  detail, and quantified results when central to the bullet's strength.
+- Cut repeated setup, redundant qualifiers, low-value mechanics, repeated technologies, secondary
+  examples, and information already obvious elsewhere.
+- Shorten the summary and longest bullets first.
+- Do not compress a strong bullet into a generic statement.
+- Do not add filler to satisfy a word target.
+- Do not use first-person pronouns or the em dash character.
 """
 
 
@@ -185,19 +264,23 @@ def build_draft_prompt(*, career_history_context: str, job_description: str) -> 
 
     return f"""Create the tailored resume content for this job description.
 
-First analyze the job and form a truthful candidate-positioning thesis internally. Then select and
-order the evidence as a complete, nonredundant capability narrative optimized for the job's core
-responsibilities. Do not include the analysis or thesis as separate output fields.
+Do not output your internal job analysis, evidence ranking, or positioning thesis.
 
-Hard structure and drafting targets:
-- Summary: aim for 43-58 words (target approximately {SUMMARY_TARGET_WORDS})
+Structure and ceilings:
+- Summary: keep at or below approximately {SUMMARY_MAX_WORDS} words; shorter is acceptable when the
+  positioning is clear.
 {_role_requirements()}
+
+Important:
+- Preferred bullet counts are not quotas.
+- Section word counts are maximums, not targets.
+- Do not add a bullet or extra wording merely to use available space.
 - Return roles in the exact order shown above.
 - Echo each role's company and role name exactly as defined in the evidence headers.
 
 For each bullet, return:
 - `text`: final resume bullet text without a bullet glyph
-- `source_files`: exact relative path(s) from the evidence supporting every claim
+- `source_files`: exact relative path(s) supporting every claim
 
 Return `summary_source_files` using exact relative paths as well.
 
@@ -212,17 +295,22 @@ Job description:
 def build_fact_check_prompt(
     *, career_history_context: str, job_description: str, draft: TailoredResume
 ) -> str:
-    """Build the independent grounding and repair request."""
+    """Build the independent grounding, evidence-selection, and job-fit repair request."""
 
     draft_json = json.dumps(draft.model_dump(), indent=2, ensure_ascii=True)
-    return f"""Audit and, where necessary, correct this generated resume draft.
 
-Independently reconstruct the job's main success criteria and reconsider the evidence selection,
-positioning, coverage, framing, and ordering. Do not limit the audit to claim verification.
+    return f"""Audit and improve this generated resume draft.
 
-Required structure and drafting targets:
-- Summary: aim for 43-58 words (target approximately {SUMMARY_TARGET_WORDS})
+Independently infer the employer's selection thesis and reconsider whether the selected
+accomplishments are the strongest available evidence for it. Do not limit the review to claim
+verification.
+
+Structure and ceilings:
+- Summary: keep at or below approximately {SUMMARY_MAX_WORDS} words; shorter is acceptable.
 {_role_requirements()}
+
+Preferred bullet counts are not quotas and word counts are ceilings, not targets. Remove weak or
+redundant bullets when allowed rather than padding them or preserving them to fill space.
 
 Generated draft:
 {draft_json}
@@ -238,13 +326,14 @@ Job description:
 def build_compression_prompt(
     *, tailoring: TailoredResume, overflow_text: str, overflow_word_count: int, attempt: int
 ) -> str:
-    """Build a request to recover enough space to meet the hard two-page limit."""
+    """Build a request to recover enough space to meet the hard two-page maximum."""
 
     tailored_json = json.dumps(tailoring.model_dump(), indent=2, ensure_ascii=True)
+
     return f"""Shorten this resume enough to fit within two rendered pages.
 
-Preserve the resume's target-role positioning and core-responsibility signals. Trim lower-value
-implementation mechanics and redundant secondary context before target-relevant evidence.
+Preserve the selected bullets, their order, the positioning, and the main target-relevant proof in
+each bullet. Remove lower-value words and secondary detail before weakening substantive evidence.
 
 Compression attempt: {attempt}
 Extracted text beyond page 2: {overflow_word_count} words
@@ -252,8 +341,8 @@ Extracted text beyond page 2: {overflow_word_count} words
 Overflow text:
 {overflow_text or "[no extractable text]"}
 
-Keep the exact role order and bullet counts:
-{_role_requirements()}
+The current bullet counts are already selected and valid. Do not add or remove bullets during the
+compression pass.
 
 Return only:
 - `summary`

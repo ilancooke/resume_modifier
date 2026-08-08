@@ -69,8 +69,7 @@ def _tailored_role_schema(spec) -> dict[str, Any]:
             "bullets": {
                 "type": "array",
                 "items": EVIDENCE_BULLET_SCHEMA,
-                "minItems": spec.bullet_count,
-                "maxItems": spec.bullet_count,
+                "maxItems": spec.max_bullets,
             },
         },
         "required": ["role_id", "company", "role", "bullets"],
@@ -119,8 +118,7 @@ COMPRESSION_SCHEMA: dict[str, Any] = {
                             "bullets": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "minItems": spec.bullet_count,
-                                "maxItems": spec.bullet_count,
+                                "maxItems": spec.max_bullets,
                             },
                         },
                         "required": ["role_id", "bullets"],
@@ -141,7 +139,7 @@ def generate_tailored_resume(
     career_history_context: str,
     allowed_sources_by_role: dict[str, set[str]],
     job_description: str,
-    model: str = "gpt-5.6-sol",
+    model: str = "gpt-5.6-terra",
 ) -> TailoredResume:
     """Draft, fact-check, validate, and normalize tailored resume content."""
 
@@ -181,9 +179,9 @@ def compress_tailored_resume(
     overflow_text: str,
     overflow_word_count: int,
     attempt: int,
-    model: str = "gpt-5.6-sol",
+    model: str = "gpt-5.6-terra",
 ) -> TailoredResume:
-    """Shorten visible content while preserving evidence and exact bullet structure."""
+    """Shorten visible content while preserving evidence and the selected bullet structure."""
 
     client = _create_client()
     prompt = build_compression_prompt(
@@ -212,7 +210,7 @@ def compress_tailored_resume(
 def validate_and_normalize_tailoring(
     *, tailoring: TailoredResume, allowed_sources_by_role: dict[str, set[str]]
 ) -> TailoredResume:
-    """Enforce exact role structure and evidence attribution locally."""
+    """Enforce role structure, bullet maximums, and evidence attribution locally."""
 
     if not tailoring.summary.strip():
         raise ResumeTailoringError("Generated summary is empty.")
@@ -251,10 +249,11 @@ def validate_and_normalize_tailoring(
             raise ResumeTailoringError(
                 f"{spec.role_id} metadata mismatch; expected {spec.company!r} / {spec.role!r}."
             )
-        if len(role.bullets) != spec.bullet_count:
+        bullet_count = len(role.bullets)
+        if not spec.valid_bullet_count(bullet_count):
             raise ResumeTailoringError(
-                f"{spec.role_id} requires exactly {spec.bullet_count} bullets, "
-                f"got {len(role.bullets)}."
+                f"{spec.role_id} allows at most {spec.max_bullets} bullets "
+                f"(preferred about {spec.preferred_bullets}), got {bullet_count}."
             )
 
         allowed_sources = allowed_sources_by_role.get(spec.role_id, set())
@@ -362,9 +361,10 @@ def _merge_compression(
         compressed_role = compressed_by_id.get(spec.role_id)
         if compressed_role is None:
             raise ResumeTailoringError(f"Compression omitted role: {spec.role_id}")
-        if len(compressed_role.bullets) != spec.bullet_count:
+        source_bullet_count = len(source_role.bullets)
+        if len(compressed_role.bullets) != source_bullet_count:
             raise ResumeTailoringError(
-                f"Compression changed {spec.role_id} bullet count from {spec.bullet_count} "
+                f"Compression changed {spec.role_id} bullet count from {source_bullet_count} "
                 f"to {len(compressed_role.bullets)}."
             )
 

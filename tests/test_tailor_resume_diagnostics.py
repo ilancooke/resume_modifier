@@ -33,7 +33,7 @@ def build_tailoring() -> TailoredResume:
                         text=f"{spec.role_id} bullet {index}",
                         source_files=[f"{spec.source_prefix}evidence.md"],
                     )
-                    for index in range(1, spec.bullet_count + 1)
+                    for index in range(1, spec.preferred_bullets + 1)
                 ],
             )
             for spec in ROLE_SPECS

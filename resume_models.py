@@ -9,15 +9,26 @@ from pydantic import BaseModel
 
 @dataclass(frozen=True, slots=True)
 class RoleSpec:
-    """Fixed output requirements for one resume role block."""
+    """Structural guidance for one resume role block.
+
+    Bullet-count guidance provides controlled flexibility:
+    - preferred_bullets is a soft target when enough strong, distinct evidence exists.
+    - max_bullets is a hard structural bound; roles may use fewer bullets.
+    - max_words is a ceiling, not a target to fill.
+    """
 
     role_id: str
     company: str
     role: str
-    bullet_count: int
-    target_words: int
+    preferred_bullets: int
+    max_bullets: int
+    max_words: int
     source_prefix: str
     anchor_texts: tuple[str, ...]
+
+    def valid_bullet_count(self, count: int) -> bool:
+        """Return whether a generated bullet count is within the hard maximum."""
+        return 0 <= count <= self.max_bullets
 
 
 ROLE_SPECS = (
@@ -25,8 +36,9 @@ ROLE_SPECS = (
         role_id="amazon_data_scientist",
         company="Amazon",
         role="Data Scientist, Marketplace Fraud & Abuse",
-        bullet_count=6,
-        target_words=400,
+        preferred_bullets=7,
+        max_bullets=8,
+        max_words=275,
         source_prefix="Amazon/Data Scientist/",
         anchor_texts=("Data Scientist, Marketplace Fraud & Abuse",),
     ),
@@ -34,8 +46,9 @@ ROLE_SPECS = (
         role_id="amazon_ba_bie",
         company="Amazon",
         role="Business Analyst / Business Intelligence Engineer",
-        bullet_count=3,
-        target_words=100,
+        preferred_bullets=3,
+        max_bullets=4,
+        max_words=90,
         source_prefix="Amazon/BA-BIE/",
         anchor_texts=(
             "Business Intelligence Engineer",
@@ -47,8 +60,9 @@ ROLE_SPECS = (
         role_id="petsmart_manager_business_analytics",
         company="PetSmart",
         role="Manager, Business Analytics",
-        bullet_count=2,
-        target_words=80,
+        preferred_bullets=3,
+        max_bullets=4,
+        max_words=120,
         source_prefix="Petsmart/PetSmart - Manager, Business Analytics.md",
         anchor_texts=("Manager, Business Analytics",),
     ),
@@ -56,15 +70,23 @@ ROLE_SPECS = (
         role_id="petsmart_customer_insights_analyst",
         company="PetSmart",
         role="Customer Insights Analyst, Marketing Analytics",
-        bullet_count=1,
-        target_words=50,
+        preferred_bullets=2,
+        max_bullets=3,
+        max_words=60,
         source_prefix="Petsmart/PetSmart - Customer Insights Analyst.md",
         anchor_texts=("Customer Insights Analyst, Marketing Analytics",),
     ),
 )
 
 ROLE_SPECS_BY_ID = {spec.role_id: spec for spec in ROLE_SPECS}
-SUMMARY_TARGET_WORDS = 50
+
+# This is a ceiling, not a target. The prompt explicitly allows a shorter summary.
+SUMMARY_MAX_WORDS = 45
+
+# Backward-compatible alias in case another module still imports the old name.
+# New prompt code should use SUMMARY_MAX_WORDS.
+SUMMARY_TARGET_WORDS = SUMMARY_MAX_WORDS
+
 SUMMARY_PLACEHOLDER = "[SUMMARY GOES HERE]"
 BULLETS_PLACEHOLDER = "[BULLET POINTS GO HERE]"
 
@@ -108,6 +130,6 @@ class TailoredResume(BaseModel):
 
 
 def count_words(value: str) -> int:
-    """Count whitespace-delimited words for soft resume length targets."""
+    """Count whitespace-delimited words for soft resume length checks."""
 
     return len(value.split())

@@ -137,9 +137,9 @@ def write_tailored_resume(
     for spec, placeholder, role in zip(
         ROLE_SPECS, bullet_paragraphs, tailoring.roles, strict=True
     ):
-        if len(role.bullets) != spec.bullet_count:
+        if not spec.valid_bullet_count(len(role.bullets)):
             raise DocxEditingError(
-                f"{spec.role_id} requires exactly {spec.bullet_count} bullets, "
+                f"{spec.role_id} allows at most {spec.max_bullets} bullets, "
                 f"got {len(role.bullets)}."
             )
         parent = placeholder.getparent()

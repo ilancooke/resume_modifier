@@ -53,7 +53,7 @@ class DocxEditorTests(unittest.TestCase):
                             text=f"{spec.role_id} bullet {index}",
                             source_files=[f"source-{spec.role_id}.md"],
                         )
-                        for index in range(1, spec.bullet_count + 1)
+                        for index in range(1, spec.preferred_bullets + 1)
                     ],
                 )
             )
@@ -83,7 +83,7 @@ class DocxEditorTests(unittest.TestCase):
         self.assertIn("Evidence-based professional summary.", texts)
         for spec in ROLE_SPECS:
             generated = [text for text in texts if text.startswith(f"{spec.role_id} bullet")]
-            self.assertEqual(len(generated), spec.bullet_count)
+            self.assertEqual(len(generated), spec.preferred_bullets)
 
         generated_paragraphs = [
             paragraph
@@ -95,7 +95,7 @@ class DocxEditorTests(unittest.TestCase):
         ]
         self.assertEqual(
             len(generated_paragraphs),
-            sum(spec.bullet_count for spec in ROLE_SPECS),
+            sum(spec.preferred_bullets for spec in ROLE_SPECS),
         )
         for paragraph in generated_paragraphs:
             num_properties = paragraph._p.find(
@@ -115,6 +115,28 @@ class DocxEditorTests(unittest.TestCase):
         self.assertIsNone(
             descriptor._p.find(qn("w:pPr") + "/" + qn("w:numPr"))
         )
+
+    def test_allows_fewer_than_preferred_bullets(self) -> None:
+        template = load_resume_template(self.template_path)
+        tailoring = self._tailoring()
+        first_role = tailoring.roles[0]
+        tailoring.roles[0] = first_role.model_copy(
+            update={"bullets": first_role.bullets[:1]}
+        )
+
+        write_tailored_resume(
+            template=template,
+            tailoring=tailoring,
+            output_path=self.output_path,
+        )
+
+        output = Document(self.output_path)
+        generated = [
+            paragraph.text
+            for paragraph in output.paragraphs
+            if paragraph.text.startswith("amazon_data_scientist bullet")
+        ]
+        self.assertEqual(len(generated), 1)
 
     def test_changes_only_document_xml_package_part(self) -> None:
         template = load_resume_template(self.template_path)

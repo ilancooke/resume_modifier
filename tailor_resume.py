@@ -27,7 +27,7 @@ from openai_client import (
     compress_tailored_resume,
     generate_tailored_resume,
 )
-from resume_models import ROLE_SPECS, SUMMARY_TARGET_WORDS, TailoredResume, count_words
+from resume_models import ROLE_SPECS, SUMMARY_MAX_WORDS, TailoredResume, count_words
 from validate_resume_match import format_report, validate_resume
 
 LOGGER = logging.getLogger(__name__)
@@ -69,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--model",
-        default="gpt-5.6-sol",
+        default="gpt-5.6-terra",
         help="OpenAI model used for drafting, factual review, compression, and match validation.",
     )
     parser.add_argument(
@@ -302,11 +302,11 @@ def run_tailored_match_validation(
 
 
 def format_content_report(tailoring: TailoredResume) -> str:
-    """Show word targets and evidence attribution for generated content."""
+    """Show content ceilings, selected bullet counts, and evidence attribution."""
 
     lines = [
         "Generated resume content:",
-        f"Summary: {count_words(tailoring.summary)} words (target ~{SUMMARY_TARGET_WORDS})",
+        f"Summary: {count_words(tailoring.summary)} words (max ~{SUMMARY_MAX_WORDS})",
         "Sources: " + ", ".join(tailoring.summary_source_files),
         "",
     ]
@@ -314,7 +314,8 @@ def format_content_report(tailoring: TailoredResume) -> str:
         role_words = sum(count_words(bullet.text) for bullet in role.bullets)
         lines.append(
             f"{spec.company} | {spec.role}: {len(role.bullets)} bullets, "
-            f"{role_words} words (target ~{spec.target_words})"
+            f"{role_words} words (max ~{spec.max_words}; "
+            f"preferred about {spec.preferred_bullets}, maximum {spec.max_bullets})"
         )
         for index, bullet in enumerate(role.bullets, start=1):
             lines.append(f"  {index}. {', '.join(bullet.source_files)}")
