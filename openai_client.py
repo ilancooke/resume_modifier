@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import os
+from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
 from pydantic import BaseModel, ValidationError
 
+from generation_metrics import ModelCallMetrics, normalize_usage
 from prompts import (
     COMPRESSION_SYSTEM_PROMPT,
     DRAFT_SYSTEM_PROMPT,
@@ -31,6 +34,16 @@ LOGGER = logging.getLogger(__name__)
 
 class ResumeTailoringError(RuntimeError):
     """Raised when a drafting request or structured response is invalid."""
+
+
+@dataclass(frozen=True, slots=True)
+class TailoringTrace:
+    """Drafting artifacts retained for reproducible experiment runs."""
+
+    draft: TailoredResume
+    audited: TailoredResume
+    tailoring: TailoredResume
+    calls: tuple[ModelCallMetrics, ...] = ()
 
 
 class CompressedRole(BaseModel):
@@ -140,10 +153,37 @@ def generate_tailored_resume(
     allowed_sources_by_role: dict[str, set[str]],
     job_description: str,
     model: str = "gpt-5.6-terra",
+    temperature: float | None = 0,
+    reasoning_effort: str | None = "none",
+    max_output_tokens: int | None = None,
 ) -> TailoredResume:
     """Draft, fact-check, validate, and normalize tailored resume content."""
 
+    return generate_tailored_resume_with_trace(
+        career_history_context=career_history_context,
+        allowed_sources_by_role=allowed_sources_by_role,
+        job_description=job_description,
+        model=model,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=max_output_tokens,
+    ).tailoring
+
+
+def generate_tailored_resume_with_trace(
+    *,
+    career_history_context: str,
+    allowed_sources_by_role: dict[str, set[str]],
+    job_description: str,
+    model: str = "gpt-5.6-terra",
+    temperature: float | None = 0,
+    reasoning_effort: str | None = "none",
+    max_output_tokens: int | None = None,
+) -> TailoringTrace:
+    """Draft and audit a resume while retaining both model outputs."""
+
     client = _create_client()
+    calls: list[ModelCallMetrics] = []
     draft = _request_tailored_resume(
         client=client,
         model=model,
@@ -153,6 +193,10 @@ def generate_tailored_resume(
             job_description=job_description,
         ),
         request_name="resume draft",
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=max_output_tokens,
+        calls=calls,
     )
 
     LOGGER.info("Requesting independent resume factuality review from OpenAI model %s", model)
@@ -166,10 +210,20 @@ def generate_tailored_resume(
             draft=draft,
         ),
         request_name="resume factuality review",
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=max_output_tokens,
+        calls=calls,
     )
-    return validate_and_normalize_tailoring(
+    tailoring = validate_and_normalize_tailoring(
         tailoring=audited,
         allowed_sources_by_role=allowed_sources_by_role,
+    )
+    return TailoringTrace(
+        draft=draft,
+        audited=audited,
+        tailoring=tailoring,
+        calls=tuple(calls),
     )
 
 
@@ -180,6 +234,10 @@ def compress_tailored_resume(
     overflow_word_count: int,
     attempt: int,
     model: str = "gpt-5.6-terra",
+    temperature: float | None = 0,
+    reasoning_effort: str | None = "none",
+    max_output_tokens: int | None = None,
+    calls: list[ModelCallMetrics] | None = None,
 ) -> TailoredResume:
     """Shorten visible content while preserving evidence and the selected bullet structure."""
 
@@ -199,6 +257,10 @@ def compress_tailored_resume(
         schema_name="resume_compression",
         schema=COMPRESSION_SCHEMA,
         request_name="resume compression",
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=max_output_tokens,
+        calls=calls,
     )
     try:
         compression = CompressionResult.model_validate(json.loads(content))
@@ -218,10 +280,11 @@ def validate_and_normalize_tailoring(
         raise ResumeTailoringError("Generated summary contains a prohibited em dash.")
 
     all_sources = set().union(*allowed_sources_by_role.values())
-    summary_sources = set(tailoring.summary_source_files)
-    if not summary_sources:
+    if not tailoring.summary_source_files:
         raise ResumeTailoringError("Generated summary does not cite any career-history source.")
-    invalid_summary_sources = summary_sources - all_sources
+    normalized_summary_sources, invalid_summary_sources = _normalize_source_files(
+        tailoring.summary_source_files, allowed_sources=all_sources
+    )
     if invalid_summary_sources:
         raise ResumeTailoringError(
             "Generated summary cites unknown source file(s): "
@@ -246,8 +309,13 @@ def validate_and_normalize_tailoring(
     for spec in ROLE_SPECS:
         role = roles_by_id[spec.role_id]
         if role.company != spec.company or role.role != spec.role:
-            raise ResumeTailoringError(
-                f"{spec.role_id} metadata mismatch; expected {spec.company!r} / {spec.role!r}."
+            LOGGER.warning(
+                "Canonicalizing %s metadata from %r / %r to %r / %r",
+                spec.role_id,
+                role.company,
+                role.role,
+                spec.company,
+                spec.role,
             )
         bullet_count = len(role.bullets)
         if not spec.valid_bullet_count(bullet_count):
@@ -257,6 +325,7 @@ def validate_and_normalize_tailoring(
             )
 
         allowed_sources = allowed_sources_by_role.get(spec.role_id, set())
+        normalized_bullets: list[EvidenceBullet] = []
         for bullet_index, bullet in enumerate(role.bullets, start=1):
             if not bullet.text.strip():
                 raise ResumeTailoringError(
@@ -266,20 +335,72 @@ def validate_and_normalize_tailoring(
                 raise ResumeTailoringError(
                     f"{spec.role_id} bullet {bullet_index} contains a prohibited em dash."
                 )
-            cited_sources = set(bullet.source_files)
-            if not cited_sources:
+            if not bullet.source_files:
                 raise ResumeTailoringError(
                     f"{spec.role_id} bullet {bullet_index} has no evidence source."
                 )
-            invalid_sources = cited_sources - allowed_sources
+            normalized_sources, invalid_sources = _normalize_source_files(
+                bullet.source_files, allowed_sources=allowed_sources
+            )
             if invalid_sources:
                 raise ResumeTailoringError(
                     f"{spec.role_id} bullet {bullet_index} cites source(s) assigned to another role "
                     f"or not found: {', '.join(sorted(invalid_sources))}"
                 )
-        normalized_roles.append(role)
+            normalized_bullets.append(
+                bullet.model_copy(update={"source_files": normalized_sources})
+            )
+        normalized_roles.append(
+            role.model_copy(
+                update={
+                    "company": spec.company,
+                    "role": spec.role,
+                    "bullets": normalized_bullets,
+                }
+            )
+        )
 
-    return tailoring.model_copy(update={"roles": normalized_roles})
+    return tailoring.model_copy(
+        update={
+            "summary_source_files": normalized_summary_sources,
+            "roles": normalized_roles,
+        }
+    )
+
+
+def _normalize_source_files(
+    source_files: list[str], *, allowed_sources: set[str]
+) -> tuple[list[str], set[str]]:
+    """Canonicalize harmless path casing while rejecting unknown or ambiguous sources."""
+
+    canonical_by_casefold: dict[str, str | None] = {}
+    for source in allowed_sources:
+        key = source.casefold()
+        if key not in canonical_by_casefold:
+            canonical_by_casefold[key] = source
+        elif canonical_by_casefold[key] != source:
+            canonical_by_casefold[key] = None
+
+    normalized: list[str] = []
+    invalid: set[str] = set()
+    for generated_source in source_files:
+        stripped_source = generated_source.strip()
+        if stripped_source in allowed_sources:
+            canonical_source = stripped_source
+        else:
+            canonical_source = canonical_by_casefold.get(stripped_source.casefold())
+        if canonical_source is None:
+            invalid.add(generated_source)
+            continue
+        if canonical_source not in normalized:
+            normalized.append(canonical_source)
+        if canonical_source != generated_source:
+            LOGGER.debug(
+                "Canonicalized generated source path %r to %r",
+                generated_source,
+                canonical_source,
+            )
+    return normalized, invalid
 
 
 def _request_tailored_resume(
@@ -289,6 +410,10 @@ def _request_tailored_resume(
     system_prompt: str,
     user_prompt: str,
     request_name: str,
+    temperature: float | None = 0,
+    reasoning_effort: str | None = "none",
+    max_output_tokens: int | None = None,
+    calls: list[ModelCallMetrics] | None = None,
 ) -> TailoredResume:
     content = _request_json(
         client=client,
@@ -298,6 +423,10 @@ def _request_tailored_resume(
         schema_name="tailored_resume",
         schema=TAILORED_RESUME_SCHEMA,
         request_name=request_name,
+        temperature=temperature,
+        reasoning_effort=reasoning_effort,
+        max_output_tokens=max_output_tokens,
+        calls=calls,
     )
     try:
         return TailoredResume.model_validate(json.loads(content))
@@ -314,18 +443,20 @@ def _request_json(
     schema_name: str,
     schema: dict[str, Any],
     request_name: str,
+    temperature: float | None = 0,
+    reasoning_effort: str | None = "none",
+    max_output_tokens: int | None = None,
+    calls: list[ModelCallMetrics] | None = None,
 ) -> str:
     LOGGER.info("Requesting %s from OpenAI model %s", request_name, model)
     try:
-        response = client.responses.create(
-            model=model,
-            temperature=0,
-            reasoning={"effort": "none"},
-            input=[
+        request: dict[str, Any] = {
+            "model": model,
+            "input": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            text={
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": schema_name,
@@ -333,9 +464,31 @@ def _request_json(
                     "schema": schema,
                 }
             },
-        )
+        }
+        if temperature is not None:
+            request["temperature"] = temperature
+        if reasoning_effort is not None:
+            request["reasoning"] = {"effort": reasoning_effort}
+        if max_output_tokens is not None:
+            request["max_output_tokens"] = max_output_tokens
+        started = perf_counter()
+        response = client.responses.create(**request)
+        duration = perf_counter() - started
     except Exception as exc:  # pragma: no cover - SDK/network failure path
         raise ResumeTailoringError(f"OpenAI {request_name} request failed: {exc}") from exc
+    if calls is not None:
+        input_tokens, cached_input_tokens, output_tokens = normalize_usage(response.usage)
+        calls.append(
+            ModelCallMetrics(
+                stage=request_name,
+                provider="openai",
+                model=model,
+                duration_seconds=round(duration, 3),
+                input_tokens=input_tokens,
+                cached_input_tokens=cached_input_tokens,
+                output_tokens=output_tokens,
+            )
+        )
     content = _extract_output_text(response)
     LOGGER.debug("Received %s payload: %s", request_name, content)
     return content

@@ -10,6 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from career_history import CareerHistory, CareerHistoryError, load_career_history
 from config import ConfigError, load_config
@@ -246,6 +247,9 @@ def repair_pdf_overflow(
     pdf_output_path: Path,
     tailoring: TailoredResume,
     model: str,
+    temperature: float | None = 0,
+    reasoning_effort: str | None = "none",
+    compressor: Callable[..., TailoredResume] | None = None,
 ) -> TailoredResume:
     """Enforce the hard two-page limit through conservative content compression."""
 
@@ -262,13 +266,23 @@ def repair_pdf_overflow(
             attempt,
             MAX_LAYOUT_REPAIR_ATTEMPTS,
         )
-        tailoring = compress_tailored_resume(
-            tailoring=tailoring,
-            overflow_text=layout_check.overflow_text,
-            overflow_word_count=layout_check.overflow_word_count,
-            attempt=attempt,
-            model=model,
-        )
+        if compressor is None:
+            tailoring = compress_tailored_resume(
+                tailoring=tailoring,
+                overflow_text=layout_check.overflow_text,
+                overflow_word_count=layout_check.overflow_word_count,
+                attempt=attempt,
+                model=model,
+                temperature=temperature,
+                reasoning_effort=reasoning_effort,
+            )
+        else:
+            tailoring = compressor(
+                tailoring=tailoring,
+                overflow_text=layout_check.overflow_text,
+                overflow_word_count=layout_check.overflow_word_count,
+                attempt=attempt,
+            )
         write_tailored_resume(
             template=template,
             tailoring=tailoring,

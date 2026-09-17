@@ -49,6 +49,22 @@ class TailoringValidationTests(unittest.TestCase):
             [spec.role_id for spec in ROLE_SPECS],
         )
 
+    def test_canonicalizes_fixed_role_metadata(self) -> None:
+        tailoring, allowed = build_tailoring()
+        role = tailoring.roles[0]
+        tailoring.roles[0] = role.model_copy(
+            update={"company": "Pet Smart", "role": "Rewritten title"}
+        )
+
+        normalized = validate_and_normalize_tailoring(
+            tailoring=tailoring, allowed_sources_by_role=allowed
+        )
+
+        spec = next(spec for spec in ROLE_SPECS if spec.role_id == role.role_id)
+        normalized_role = normalized.role_by_id(role.role_id)
+        self.assertEqual(normalized_role.company, spec.company)
+        self.assertEqual(normalized_role.role, spec.role)
+
     def test_rejects_cross_role_source(self) -> None:
         tailoring, allowed = build_tailoring()
         first_role = tailoring.roles[0]
@@ -63,6 +79,27 @@ class TailoringValidationTests(unittest.TestCase):
             validate_and_normalize_tailoring(
                 tailoring=tailoring, allowed_sources_by_role=allowed
             )
+
+    def test_normalizes_case_only_source_path_differences(self) -> None:
+        tailoring, allowed = build_tailoring()
+        expected_summary_source = tailoring.summary_source_files[0]
+        tailoring.summary_source_files = [expected_summary_source.swapcase()]
+        first_role = tailoring.roles[0]
+        expected_bullet_source = first_role.bullets[0].source_files[0]
+        first_role.bullets[0] = first_role.bullets[0].model_copy(
+            update={"source_files": [expected_bullet_source.swapcase()]}
+        )
+
+        normalized = validate_and_normalize_tailoring(
+            tailoring=tailoring, allowed_sources_by_role=allowed
+        )
+
+        self.assertEqual(normalized.summary_source_files, [expected_summary_source])
+        normalized_role = normalized.role_by_id(first_role.role_id)
+        self.assertEqual(
+            normalized_role.bullets[0].source_files,
+            [expected_bullet_source],
+        )
 
     def test_allows_fewer_than_preferred_bullets(self) -> None:
         tailoring, allowed = build_tailoring()

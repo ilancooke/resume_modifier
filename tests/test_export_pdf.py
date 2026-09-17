@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import tempfile
 import unittest
@@ -17,6 +18,12 @@ class ExportDocxToPdfTests(unittest.TestCase):
         self.docx_path = self.root / "resume.docx"
         self.pdf_path = self.root / "resume.pdf"
         self.docx_path.write_bytes(b"docx placeholder")
+        self.word_staging_root = self.root / "word-container-tmp" / "resume_modifier"
+        staging_patcher = patch(
+            "export_pdf._word_staging_root", return_value=self.word_staging_root
+        )
+        staging_patcher.start()
+        self.addCleanup(staging_patcher.stop)
 
     @patch("export_pdf._find_word_application", return_value=Path("/Applications/Microsoft Word.app"))
     @patch("export_pdf.platform.system", return_value="Darwin")
@@ -27,7 +34,11 @@ class ExportDocxToPdfTests(unittest.TestCase):
         _system_mock,
         _word_mock,
     ) -> None:
+        staged_paths = []
+
         def create_pdf(*args, **kwargs):
+            staged_paths.extend((Path(args[0][2]), Path(args[0][3])))
+            self.assertEqual(Path(args[0][2]).read_bytes(), b"docx placeholder")
             Path(args[0][3]).write_bytes(b"%PDF-1.4\ncontent")
             return subprocess.CompletedProcess(args[0], 0, "", "")
 
@@ -37,11 +48,12 @@ class ExportDocxToPdfTests(unittest.TestCase):
 
         self.assertEqual(result, self.pdf_path.resolve())
         args, kwargs = run_mock.call_args
-        self.assertEqual(args[0][:3], ["osascript", "-", str(self.docx_path.resolve())])
-        temporary_pdf = Path(args[0][3])
-        self.assertEqual(temporary_pdf.parent, self.pdf_path.parent.resolve())
-        self.assertEqual(temporary_pdf.suffix, ".pdf")
-        self.assertNotEqual(temporary_pdf, self.pdf_path.resolve())
+        self.assertEqual(args[0][:2], ["osascript", "-"])
+        staged_docx, staged_pdf = staged_paths
+        self.assertEqual(staged_docx.parent.parent, self.word_staging_root)
+        self.assertEqual(staged_pdf.parent, staged_docx.parent)
+        self.assertFalse(staged_docx.parent.exists())
+        self.assertEqual(self.pdf_path.read_bytes(), b"%PDF-1.4\ncontent")
         self.assertIn('application "Microsoft Word"', kwargs["input"])
         self.assertIn("file format format PDF", kwargs["input"])
         self.assertIn("close active window", kwargs["input"])
@@ -58,6 +70,7 @@ class ExportDocxToPdfTests(unittest.TestCase):
             export_pdf.export_docx_to_pdf(self.docx_path, self.pdf_path)
 
         run_mock.assert_called_once()
+        self.assertEqual(list(self.word_staging_root.iterdir()), [])
 
     @patch("export_pdf._find_word_application", return_value=Path("/Applications/Microsoft Word.app"))
     @patch("export_pdf.platform.system", return_value="Darwin")
@@ -67,6 +80,8 @@ class ExportDocxToPdfTests(unittest.TestCase):
 
         with self.assertRaisesRegex(export_pdf.PdfExportError, "empty PDF"):
             export_pdf.export_docx_to_pdf(self.docx_path, self.pdf_path)
+
+        self.assertEqual(list(self.word_staging_root.iterdir()), [])
 
     @patch("export_pdf._find_word_application", return_value=Path("/Applications/Microsoft Word.app"))
     @patch("export_pdf.platform.system", return_value="Darwin")
@@ -96,6 +111,25 @@ class ExportDocxToPdfTests(unittest.TestCase):
 
         with self.assertRaisesRegex(export_pdf.PdfExportError, "timed out"):
             export_pdf.export_docx_to_pdf(self.docx_path, self.pdf_path)
+
+        self.assertEqual(list(self.word_staging_root.iterdir()), [])
+
+    def test_cleanup_removes_only_stale_owned_directories(self) -> None:
+        self.word_staging_root.mkdir(parents=True)
+        stale = self.word_staging_root / "export_stale"
+        recent = self.word_staging_root / "export_recent"
+        unrelated = self.word_staging_root / "word_owned"
+        stale.mkdir()
+        recent.mkdir()
+        unrelated.mkdir()
+        stale_time = 1
+        os.utime(stale, (stale_time, stale_time))
+
+        export_pdf._cleanup_stale_word_exports(self.word_staging_root)
+
+        self.assertFalse(stale.exists())
+        self.assertTrue(recent.exists())
+        self.assertTrue(unrelated.exists())
 
     @patch("export_pdf.platform.system", return_value="Darwin")
     @patch("export_pdf._find_word_application", return_value=None)

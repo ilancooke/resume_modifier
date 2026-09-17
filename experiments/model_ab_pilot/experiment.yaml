@@ -1,0 +1,70 @@
+experiment_id: openai_terra_vs_anthropic_sonnet_5_pilot_v1
+
+job_descriptions_dir: /Users/ilan/Documents/resumes/job_description
+job_files:
+  - role1.txt
+  - role2.txt
+  - role5.txt
+  - role6.txt
+  - role7.txt
+
+resume_template: /Users/ilan/Documents/resumes/stub/ilan_cooke_resume_stub.docx
+artifact_root: ../../experiment_runs
+generation_replicates: 3
+
+# The generation model/provider is the only treatment difference. Both treatments use the
+# current production career-history context, template, prompts, and local validation rules.
+treatments:
+  - id: openai_terra
+    provider: openai
+    model: gpt-5.6-terra
+    temperature: null
+    reasoning_effort: medium
+    max_output_tokens: 16000
+    pricing:
+      input_per_million: 2.0
+      cached_input_per_million: 0.2
+      output_per_million: 12.0
+    prompt_version: current
+    career_history_dir: /Users/ilan/Documents/ilan vault/career history
+
+  - id: anthropic_sonnet_5
+    provider: anthropic
+    model: claude-sonnet-5
+    temperature: null
+    reasoning_effort: medium
+    anthropic_thinking: adaptive
+    max_output_tokens: 16000
+    pricing:
+      input_per_million: 2.0
+      cached_input_per_million: 0.2
+      output_per_million: 10.0
+    prompt_version: current
+    career_history_dir: /Users/ilan/Documents/ilan vault/career history
+
+evaluation:
+  absolute_scoring: true
+  pairwise_scoring: true
+  evaluate_both_orders: true
+  repetitions_per_order: 1
+  judges:
+    - id: openai_sol
+      provider: openai
+      model: gpt-5.6-sol
+      reasoning_effort: low
+      pricing:
+        input_per_million: 4.0
+        cached_input_per_million: 0.4
+        output_per_million: 20.0
+
+    - id: anthropic_opus_5
+      provider: anthropic
+      model: claude-opus-5
+      reasoning_effort: low
+      anthropic_thinking: adaptive
+      max_output_tokens: 8000
+      pricing:
+        input_per_million: 5.0
+        cached_input_per_million: 0.5
+        output_per_million: 25.0
+

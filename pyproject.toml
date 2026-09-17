@@ -5,11 +5,13 @@ description = "CLI tool for drafting an evidence-based resume from Markdown care
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+  "anthropic>=1.0.0",
   "openai>=1.0.0",
   "pydantic>=2.0.0",
   "pymupdf>=1.24.0",
   "python-dotenv>=1.0.0",
   "python-docx>=1.1.0",
+  "pyyaml>=6.0.0",
 ]
 
 [build-system]
@@ -19,15 +21,22 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 py-modules = [
   "career_history",
+  "anthropic_client",
   "config",
   "docx_editor",
+  "experiment_config",
+  "experiment_generation",
+  "experiment_judges",
+  "experiment_prompts",
   "export_pdf",
+  "generation_metrics",
   "match_client",
   "match_prompts",
   "openai_client",
   "prompts",
   "resume_reader",
   "resume_models",
+  "resume_experiment",
   "tailor_resume",
   "validate_resume_match",
 ]

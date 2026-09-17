@@ -1,0 +1,50 @@
+experiment_id: career_context_structure_v1
+
+# The runner recursively consumes every .txt file under this directory.
+# Filenames identify experiment cases; job IDs inside the postings are not required.
+job_descriptions_dir: /Users/ilan/Documents/resumes/job_description
+resume_template: /Users/ilan/Documents/resumes/stub/ilan_cooke_resume_stub.docx
+artifact_root: ../../experiment_runs
+generation_replicates: 1
+
+treatments:
+  - id: free_flow_context
+    provider: openai
+    model: gpt-5.6-terra
+    temperature: 0
+    reasoning_effort: none
+    prompt_version: current
+    career_history_dir: /Users/ilan/Documents/ilan vault/career history
+
+  - id: transformed_context
+    provider: openai
+    model: gpt-5.6-terra
+    temperature: 0
+    reasoning_effort: none
+    prompt_version: current
+    career_history_dir: /Users/ilan/Documents/ilan vault/career history transformed
+
+evaluation:
+  evaluate_both_orders: true
+  repetitions_per_order: 1
+  judges:
+    - id: astra
+      provider: openai
+      model: gpt-6-astra
+      reasoning_effort: low
+    - id: sol
+      provider: openai
+      model: gpt-5.6-sol
+      reasoning_effort: none
+    - id: terra
+      provider: openai
+      model: gpt-5.6-terra
+      reasoning_effort: none
+    - id: luna
+      provider: openai
+      model: gpt-5.6-luna
+      reasoning_effort: none
+    - id: claude_sonnet_5
+      provider: anthropic
+      model: claude-sonnet-5
+      max_output_tokens: 5000
