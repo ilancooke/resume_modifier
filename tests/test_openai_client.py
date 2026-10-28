@@ -11,9 +11,13 @@ def build_tailoring() -> tuple[TailoredResume, dict[str, set[str]]]:
     allowed: dict[str, set[str]] = {}
     all_sources = []
     for spec in reversed(ROLE_SPECS):
-        source = f"{spec.source_prefix}evidence.md" if spec.source_prefix.endswith("/") else spec.source_prefix
-        allowed[spec.role_id] = {source}
-        all_sources.append(source)
+        sources = [
+            f"{prefix}evidence.md" if prefix.endswith("/") else prefix
+            for prefix in spec.source_prefixes
+        ]
+        source = sources[0]
+        allowed[spec.role_id] = set(sources)
+        all_sources.extend(sources)
         roles.append(
             TailoredRole(
                 role_id=spec.role_id,
@@ -37,6 +41,25 @@ def build_tailoring() -> tuple[TailoredResume, dict[str, set[str]]]:
 
 
 class TailoringValidationTests(unittest.TestCase):
+    def test_combined_petsmart_bullets_can_cite_both_original_roles(self) -> None:
+        tailoring, allowed = build_tailoring()
+        role = tailoring.role_by_id("petsmart_analytics")
+        role.bullets = [
+            EvidenceBullet(text="Supported combined accomplishment.", source_files=sorted(allowed[role.role_id]))
+        ]
+
+        normalized = validate_and_normalize_tailoring(
+            tailoring=tailoring, allowed_sources_by_role=allowed
+        )
+
+        self.assertEqual(
+            normalized.role_by_id("petsmart_analytics").bullets[0].source_files,
+            [
+                "Petsmart/PetSmart - Customer Insights Analyst.md",
+                "Petsmart/PetSmart - Manager, Business Analytics.md",
+            ],
+        )
+
     def test_normalizes_roles_to_template_order(self) -> None:
         tailoring, allowed = build_tailoring()
 

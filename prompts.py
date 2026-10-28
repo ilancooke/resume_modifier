@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from resume_models import ROLE_SPECS, SUMMARY_MAX_WORDS, TailoredResume
+from resume_models import FeedbackRevision, FeedbackSignal, ROLE_SPECS, SUMMARY_MAX_WORDS, TailoredResume
 
 
 def _role_requirements() -> str:
@@ -13,7 +13,8 @@ def _role_requirements() -> str:
 
     for spec in ROLE_SPECS:
         lines.append(
-            f"- {spec.role_id}: prefer about {spec.preferred_bullets} bullets; "
+            f"- {spec.role_id}: prefer about {spec.preferred_bullets} "
+            f"{'bullet' if spec.preferred_bullets == 1 else 'bullets'}; "
             f"use at most {spec.max_bullets}; "
             f"keep the section at or below approximately {spec.max_words} words total"
         )
@@ -32,6 +33,9 @@ FACTUALITY
 - Preserve material qualifiers such as approximately, estimated, prototype, finance-provided, or
   team-owned.
 - A role may use only evidence assigned to that role. The summary may synthesize across roles.
+- The PetSmart section combines Manager, Business Analytics and Customer Insights Analyst.
+  Select one nonredundant bullet set from either or both assigned source files. Combining the
+  section does not transfer managerial ownership, scope, or responsibilities to the analyst role.
 - Every bullet must cite exact relative source path(s) supporting every claim.
 
 EMPLOYER SELECTION THESIS
@@ -130,7 +134,10 @@ Writing rules:
 
 BULLET LENGTH
 - Most bullets should be 25-40 words.
-- Prefer 25-35 words when the accomplishment can be expressed clearly in that space.
+- For amazon_data_scientist, prefer 30-40 words when supported detail strengthens the evidence.
+  Preserve useful evaluation methods, operational responsibilities, collaboration, and outcomes
+  rather than shortening away proof of a high-priority job requirement.
+- For other roles, prefer 25-35 words when the accomplishment can be expressed clearly in that space.
 - A bullet may reach roughly 45 words when technical or business context materially improves it.
 - Avoid bullets over 50 words except when shortening would remove important evidence.
 - There is no minimum bullet length.
@@ -232,6 +239,9 @@ AUDIT
   wording, and awkward clauses when they dilute the accomplishment.
 - Confirm most bullets are roughly 25-40 words and that bullets over 50 words truly require the
   additional detail.
+- For amazon_data_scientist, retain useful supported detail within the 30-40 word preference rather
+  than shortening away evaluation methods, operational responsibilities, collaboration, or outcomes
+  that demonstrate a high-priority job requirement. Shorter bullets remain acceptable when complete.
 - Repair role order, role metadata, source-file attribution, display ordering, and bullet counts that
   exceed the allowed maximums.
 
@@ -256,6 +266,79 @@ The selected bullet count is already valid and should remain unchanged during co
 - Do not compress a strong bullet into a generic statement.
 - Do not add filler to satisfy a word target.
 - Do not use first-person pronouns or the em dash character.
+"""
+
+
+FEEDBACK_REVISION_SYSTEM_PROMPT = BASE_RESUME_RULES + """
+You revise a resume once in response to an independent evaluation of its rendered PDF.
+
+The match report is feedback, not factual evidence. Check each observation against the job
+description, rendered resume, and complete career history. Search all supplied source files,
+including files not cited in the current resume. Also revisit details omitted from files already
+cited: a procedures bullet may omit actual incident response, for example.
+
+Preserve the strongest existing accomplishments. Expand a bullet, add a distinct accomplishment,
+replace weaker evidence, or refine the summary only when doing so strengthens an important job
+requirement. Do not rewrite unrelated content or chase a higher numerical score. Prefer actual
+actions, evaluation methods, collaboration, and outcomes over adding keywords.
+
+Only the summary and the three work-experience bullet blocks are editable. Skills, Selected
+Projects, titles, dates, education, and certifications are fixed template content. Keep job metadata
+unchanged. Do not invent qualifications or turn unsupported gaps into claims.
+
+Return the complete `tailoring` and one `decisions` entry for every supplied signal_id:
+- addressed: a supported omission has been repaired; cite the exact supporting source files.
+- already_demonstrated: sufficient evidence is already visible; explain where.
+- unsupported: the career history does not support the requested experience or qualification.
+- outside_editable_scope: the requested change requires editing fixed template content.
+- deferred: evidence exists, but including it would weaken evidence selection, add redundancy,
+  or exceed the space budget; explain the tradeoff and cite the available evidence.
+Every decision needs a concise rationale. Use an empty source_files list when no source supports it.
+Return the original tailoring unchanged when no useful supported revision is warranted.
+"""
+
+
+def build_feedback_revision_prompt(
+    *, career_history_context: str, job_description: str, tailoring: TailoredResume,
+    rendered_resume_text: str, match_report_json: str, signals: list[FeedbackSignal],
+    proposal: FeedbackRevision | None = None,
+) -> str:
+    """Supply full evidence for either targeted revision or its independent audit."""
+
+    audit = ""
+    if proposal is not None:
+        audit = f"""
+Independently audit the proposed revision against the original career evidence. Correct or remove
+unsupported claims and preserve useful supported repairs. Verify that every addressed decision is
+actually demonstrated in the returned resume. Update the decisions to reflect your audited result,
+including repairs you remove or defer. Do not assume the revision or match evaluator is correct.
+
+Proposed revision and decisions:
+{proposal.model_dump_json(indent=2)}
+"""
+    return f"""Review the match feedback and return one evidence-grounded revision.
+{audit}
+Structure and ceilings:
+- Summary: approximately {SUMMARY_MAX_WORDS} words or fewer.
+{_role_requirements()}
+
+Original attributed resume (preserve job metadata):
+{tailoring.model_dump_json(indent=2)}
+
+Rendered resume, including fixed template content:
+{rendered_resume_text}
+
+Initial match report (feedback only, not a factual source):
+{match_report_json}
+
+Signals requiring a decision, in order:
+{json.dumps([signal.model_dump() for signal in signals], indent=2)}
+
+Complete career-history evidence:
+{career_history_context}
+
+Job description:
+{job_description}
 """
 
 
@@ -324,11 +407,20 @@ Job description:
 
 
 def build_compression_prompt(
-    *, tailoring: TailoredResume, overflow_text: str, overflow_word_count: int, attempt: int
+    *, tailoring: TailoredResume, overflow_text: str, overflow_word_count: int, attempt: int,
+    revision_objectives: str = "",
 ) -> str:
     """Build a request to recover enough space to meet the hard two-page maximum."""
 
     tailored_json = json.dumps(tailoring.model_dump(), indent=2, ensure_ascii=True)
+    objectives = ""
+    if revision_objectives:
+        objectives = (
+            "\nProtect these supported feedback repairs while shortening. Retain the actual "
+            "methods, responsibilities, and outcomes that make the signals visible; do not replace "
+            "them with generic wording. These notes are not a source of new facts:\n"
+            + revision_objectives + "\n"
+        )
 
     return f"""Shorten this resume enough to fit within two rendered pages.
 
@@ -343,6 +435,7 @@ Overflow text:
 
 The current bullet counts are already selected and valid. Do not add or remove bullets during the
 compression pass.
+{objectives}
 
 Return only:
 - `summary`

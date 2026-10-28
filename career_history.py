@@ -126,10 +126,11 @@ def load_career_history(path: str | Path) -> CareerHistory:
 
 def _assign_role(relative_path: str) -> str | None:
     for spec in ROLE_SPECS:
-        if spec.source_prefix.endswith("/"):
-            if relative_path.startswith(spec.source_prefix):
+        for source_prefix in spec.source_prefixes:
+            if source_prefix.endswith("/"):
+                if relative_path.startswith(source_prefix):
+                    return spec.role_id
+            elif relative_path == source_prefix:
                 return spec.role_id
-        elif relative_path == spec.source_prefix:
-            return spec.role_id
     return None
 

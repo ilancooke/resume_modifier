@@ -150,7 +150,7 @@ def generate_resume_match_report(
     *,
     resume_text: str,
     job_description: str,
-    model: str = "gpt-5.6-terra",
+    model: str = "gpt-6.1-terra",
 ) -> ResumeMatchReport:
     """Generate a structured resume-to-job match report from the OpenAI API."""
 

@@ -15,19 +15,45 @@ For each run, the tool:
 7. Copies the resume stub and replaces its placeholders without rewriting other DOCX package parts.
 8. Exports the result to PDF through Microsoft Word.
 9. Conservatively compresses the content when necessary to meet the hard two-page limit.
-10. Prints a match report for the tailored resume only.
+10. Evaluates the rendered PDF against the job description.
+11. Uses the match report and full career history for one targeted revision, when feedback exists.
+12. Independently fact-checks changed content against the full career history.
+13. Renders the candidate, enforces two pages, and evaluates the revised PDF once.
+14. Publishes the validated revision and saves the initial and final reports plus revision decisions.
+
+The feedback cycle is enabled by default. It searches all career-history files, including omitted
+details in files already cited, and can expand, add, or replace bullets or refine the summary.
+Each feedback item receives a decision: addressed, already demonstrated, unsupported, outside the
+editable template sections, or deferred with a reason. Unsupported experience is not added.
+
+A changed resume normally adds three API calls: targeted revision, factuality review, and final PDF
+matching, plus compression calls if needed. Both revision and factuality review receive the full
+career history; matching receives only extracted PDF text and the job description. Compression
+receives the current resume, overflow information, and the supported repair objectives. There is no
+repeat revision loop and no automatic selection based solely on a higher numerical match score.
+
+When no feedback exists, no additional model calls are made. When the proposed resume is unchanged,
+the factuality, export, and final-match stages are skipped. If the factuality reviewer restores the
+original resume, export and final matching are skipped. Revision failures retain the initial files,
+are recorded in diagnostics, and cause a nonzero exit status.
 
 The generated structure prioritizes the strongest nonredundant evidence:
 
 - Summary: up to approximately 45 words
-- Amazon Data Scientist: prefer about 7 bullets; maximum 8
-- Amazon Business Analyst / Business Intelligence Engineer: prefer about 3 bullets; maximum 4
-- PetSmart Manager, Business Analytics: prefer about 3 bullets; maximum 4
-- PetSmart Customer Insights Analyst: prefer about 2 bullets; maximum 3
+- Amazon Data Scientist: prefer about 7 bullets; maximum 8; approximately 260 words or fewer
+- Amazon Business Analyst / Business Intelligence Engineer: prefer about 1 bullet; maximum 2;
+  approximately 70 words or fewer
+- PetSmart combined Manager, Business Analytics / Customer Insights Analyst: prefer about 3 bullets;
+  maximum 4; approximately 100 words or fewer, drawn from either or both roles' source files
 
 The two-page limit, factuality, correct role history, and maximum bullet counts are hard constraints.
 Preferred bullet counts and word ceilings are guides, not quotas: the workflow may use fewer bullets
 when another accomplishment would not strengthen the resume.
+
+Most bullets should be 25-40 words. For Amazon Data Scientist, prefer 30-40 words when supported
+detail strengthens the evidence, allowing roughly 45 words when substantive context warrants it.
+For other roles, prefer 25-35 words when sufficient; shorter bullets remain acceptable. Preserve
+useful methods, operational responsibilities, collaboration, and outcomes without adding filler.
 
 ## Requirements
 
@@ -66,7 +92,8 @@ Edit `config.json`:
   "resume_template_path": "/Users/ilan/Documents/resumes/stub/ilan_cooke_resume_stub.docx",
   "career_history_dir": "/Users/ilan/Documents/ilan vault/career history",
   "job_description_path": "/Users/ilan/Documents/resumes/job_description/role.txt",
-  "tailored_resumes_dir": "/Users/ilan/Documents/resumes/roles"
+  "tailored_resumes_dir": "/Users/ilan/Documents/resumes/roles",
+  "resume_diagnostics_dir": "/Users/ilan/Documents/resumes/resume_diagnostics"
 }
 ```
 
@@ -78,6 +105,18 @@ Career-history assignments are derived from these relative paths:
 - `Petsmart/PetSmart - Customer Insights Analyst.md`
 
 An unrecognized Markdown path is treated as an error so new evidence is not silently assigned to the wrong role.
+Both PetSmart files are assigned to the shared `petsmart_analytics` section; source attribution
+continues to identify the individual supporting files.
+
+The DOCX template must contain one `[SUMMARY GOES HERE]` paragraph and three
+`[BULLET POINTS GO HERE]` paragraphs, in this order:
+
+1. Amazon Data Scientist, Marketplace Fraud & Abuse.
+2. Amazon Business Analyst / BI Engineer, Related Accounts Enforcement.
+3. PetSmart, with both Manager, Business Analytics and Customer Insights Analyst titles above one
+   shared bullet placeholder.
+
+Skills, Selected Projects, and other content outside these placeholders are preserved.
 
 ## Usage
 
@@ -98,9 +137,10 @@ python tailor_resume.py \
 
 Useful options:
 
-- `--dry-run`: draft and validate content without writing DOCX or PDF files
+- `--dry-run`: draft and fact-check without files, PDF matching, or feedback revision
+- `--skip-feedback-revision`: retain the initial resume and its match report without the extra cycle
 - `--show-diff`: show the placeholder-to-content preview
-- `--model`: choose the OpenAI model; default is `gpt-5.6-terra`
+- `--model`: choose the OpenAI model; default is `gpt-6.1-terra`
 - `--log-level`: `DEBUG`, `INFO`, `WARNING`, or `ERROR`
 
 ## Outputs
@@ -119,6 +159,23 @@ Each completed run also writes its evidence-attribution, optional diff, and tail
 ```
 
 The source template is never modified.
+
+For an attempted feedback revision, the diagnostics link to a unique archive under:
+
+```text
+<resume_diagnostics_dir>/<candidate>_<company>_<job_id>.diagnostics.feedback_runs/<run>/
+```
+
+It retains the initial DOCX/PDF, attributed content and structured match report, proposal and audit
+when available, staged candidate files, candidate match report, and outcome. The main diagnostics
+show feedback decisions and sources, the initial report, the actual initial-to-final content diff,
+score differences, and the selected PDF's final report. Decisions describe the proposal/audit;
+remaining weak signals must be read from the final PDF report because compression may affect wording.
+Candidate files replace the standard outputs only after export, page fitting, and final matching
+succeed. Initial files are restored if publication fails partway through.
+
+Standalone matching and experiment treatments retain their existing behavior; they do not invoke
+the standard CLI's additional feedback cycle.
 
 ## Standalone match validation
 

@@ -18,12 +18,16 @@ from prompts import (
     COMPRESSION_SYSTEM_PROMPT,
     DRAFT_SYSTEM_PROMPT,
     FACT_CHECK_SYSTEM_PROMPT,
+    FEEDBACK_REVISION_SYSTEM_PROMPT,
     build_compression_prompt,
     build_draft_prompt,
     build_fact_check_prompt,
+    build_feedback_revision_prompt,
 )
 from resume_models import (
     EvidenceBullet,
+    FeedbackRevision,
+    FeedbackSignal,
     ROLE_SPECS,
     TailoredResume,
     TailoredRole,
@@ -114,6 +118,33 @@ TAILORED_RESUME_SCHEMA: dict[str, Any] = {
     "required": ["summary", "summary_source_files", "roles", "metadata"],
 }
 
+FEEDBACK_REVISION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "tailoring": TAILORED_RESUME_SCHEMA,
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "signal_id": {"type": "string"},
+                    "status": {
+                        "type": "string",
+                        "enum": ["addressed", "already_demonstrated", "unsupported",
+                                 "outside_editable_scope", "deferred"],
+                    },
+                    "rationale": {"type": "string"},
+                    "source_files": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["signal_id", "status", "rationale", "source_files"],
+            },
+        },
+    },
+    "required": ["tailoring", "decisions"],
+}
+
 COMPRESSION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -152,7 +183,7 @@ def generate_tailored_resume(
     career_history_context: str,
     allowed_sources_by_role: dict[str, set[str]],
     job_description: str,
-    model: str = "gpt-5.6-terra",
+    model: str = "gpt-6.1-terra",
     temperature: float | None = 0,
     reasoning_effort: str | None = "none",
     max_output_tokens: int | None = None,
@@ -175,7 +206,7 @@ def generate_tailored_resume_with_trace(
     career_history_context: str,
     allowed_sources_by_role: dict[str, set[str]],
     job_description: str,
-    model: str = "gpt-5.6-terra",
+    model: str = "gpt-6.1-terra",
     temperature: float | None = 0,
     reasoning_effort: str | None = "none",
     max_output_tokens: int | None = None,
@@ -227,17 +258,92 @@ def generate_tailored_resume_with_trace(
     )
 
 
+def request_feedback_revision(
+    *, career_history_context: str, allowed_sources_by_role: dict[str, set[str]],
+    job_description: str, tailoring: TailoredResume, rendered_resume_text: str,
+    match_report_json: str, signals: list[FeedbackSignal],
+    proposal: FeedbackRevision | None = None, model: str = "gpt-6.1-terra",
+    calls: list[ModelCallMetrics] | None = None,
+) -> FeedbackRevision:
+    """Propose or independently audit one feedback revision using all career evidence."""
+
+    stage = "feedback factuality review" if proposal is not None else "feedback revision"
+    system_prompt = FEEDBACK_REVISION_SYSTEM_PROMPT
+    if proposal is not None:
+        system_prompt += (
+            "\nYou are the independent factuality reviewer. Verify every revised claim against "
+            "the original evidence and correct both the resume and its decision explanations."
+        )
+    content = _request_json(
+        client=_create_client(), model=model, system_prompt=system_prompt,
+        user_prompt=build_feedback_revision_prompt(
+            career_history_context=career_history_context, job_description=job_description,
+            tailoring=tailoring, rendered_resume_text=rendered_resume_text,
+            match_report_json=match_report_json, signals=signals, proposal=proposal,
+        ),
+        schema_name="feedback_revision", schema=FEEDBACK_REVISION_SCHEMA,
+        request_name=stage, calls=calls,
+    )
+    try:
+        revision = FeedbackRevision.model_validate(json.loads(content))
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise ResumeTailoringError(f"{stage.capitalize()} validation failed: {exc}") from exc
+    return validate_feedback_revision(
+        revision=revision, original=tailoring, signals=signals,
+        allowed_sources_by_role=allowed_sources_by_role,
+    )
+
+
+def validate_feedback_revision(
+    *, revision: FeedbackRevision, original: TailoredResume,
+    signals: list[FeedbackSignal], allowed_sources_by_role: dict[str, set[str]],
+) -> FeedbackRevision:
+    """Validate feedback coverage, evidence citations, and unchanged job identity."""
+
+    if revision.tailoring.metadata != original.metadata:
+        raise ResumeTailoringError("Feedback revision changed job metadata.")
+    tailoring = validate_and_normalize_tailoring(
+        tailoring=revision.tailoring, allowed_sources_by_role=allowed_sources_by_role,
+    )
+    if tailoring == original and any(decision.status == "addressed" for decision in revision.decisions):
+        raise ResumeTailoringError("Unchanged resume cannot claim addressed feedback; use already_demonstrated.")
+    ids = [decision.signal_id for decision in revision.decisions]
+    if len(ids) != len(set(ids)) or set(ids) != {signal.signal_id for signal in signals}:
+        raise ResumeTailoringError("Feedback decisions must cover every signal exactly once.")
+    all_sources = set().union(*allowed_sources_by_role.values())
+    cited_sources = set(tailoring.summary_source_files)
+    cited_sources.update(source for role in tailoring.roles for bullet in role.bullets
+                         for source in bullet.source_files)
+    normalized = {}
+    for decision in revision.decisions:
+        if not decision.rationale.strip():
+            raise ResumeTailoringError("Feedback decision rationale is empty.")
+        sources, invalid = _normalize_source_files(decision.source_files, allowed_sources=all_sources)
+        if invalid:
+            raise ResumeTailoringError("Feedback decision cites unknown source(s): " + ", ".join(sorted(invalid)))
+        if decision.status in {"addressed", "deferred"} and not sources:
+            raise ResumeTailoringError(f"{decision.status} feedback decision requires evidence sources.")
+        if decision.status == "addressed" and not set(sources).issubset(cited_sources):
+            raise ResumeTailoringError("Addressed feedback evidence is not cited in the revised resume.")
+        normalized[decision.signal_id] = decision.model_copy(update={"source_files": sources})
+    return revision.model_copy(update={
+        "tailoring": tailoring,
+        "decisions": [normalized[signal.signal_id] for signal in signals],
+    })
+
+
 def compress_tailored_resume(
     *,
     tailoring: TailoredResume,
     overflow_text: str,
     overflow_word_count: int,
     attempt: int,
-    model: str = "gpt-5.6-terra",
+    model: str = "gpt-6.1-terra",
     temperature: float | None = 0,
     reasoning_effort: str | None = "none",
     max_output_tokens: int | None = None,
     calls: list[ModelCallMetrics] | None = None,
+    revision_objectives: str = "",
 ) -> TailoredResume:
     """Shorten visible content while preserving evidence and the selected bullet structure."""
 
@@ -247,6 +353,7 @@ def compress_tailored_resume(
         overflow_text=overflow_text,
         overflow_word_count=overflow_word_count,
         attempt=attempt,
+        revision_objectives=revision_objectives,
     )
     LOGGER.info("Requesting two-page compression from OpenAI model %s", model)
     content = _request_json(

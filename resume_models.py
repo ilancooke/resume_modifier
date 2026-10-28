@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,7 +24,7 @@ class RoleSpec:
     preferred_bullets: int
     max_bullets: int
     max_words: int
-    source_prefix: str
+    source_prefixes: tuple[str, ...]
     anchor_texts: tuple[str, ...]
 
     def valid_bullet_count(self, count: int) -> bool:
@@ -38,43 +39,35 @@ ROLE_SPECS = (
         role="Data Scientist, Marketplace Fraud & Abuse",
         preferred_bullets=7,
         max_bullets=8,
-        max_words=275,
-        source_prefix="Amazon/Data Scientist/",
+        max_words=260,
+        source_prefixes=("Amazon/Data Scientist/",),
         anchor_texts=("Data Scientist, Marketplace Fraud & Abuse",),
     ),
     RoleSpec(
         role_id="amazon_ba_bie",
         company="Amazon",
         role="Business Analyst / Business Intelligence Engineer",
-        preferred_bullets=3,
-        max_bullets=4,
-        max_words=90,
-        source_prefix="Amazon/BA-BIE/",
+        preferred_bullets=1,
+        max_bullets=2,
+        max_words=70,
+        source_prefixes=("Amazon/BA-BIE/",),
         anchor_texts=(
-            "Business Intelligence Engineer",
-            "Business Analyst",
+            "Business Analyst / BI Engineer",
             "Related Accounts Enforcement",
         ),
     ),
     RoleSpec(
-        role_id="petsmart_manager_business_analytics",
+        role_id="petsmart_analytics",
         company="PetSmart",
-        role="Manager, Business Analytics",
+        role="Manager, Business Analytics / Customer Insights Analyst",
         preferred_bullets=3,
         max_bullets=4,
-        max_words=120,
-        source_prefix="Petsmart/PetSmart - Manager, Business Analytics.md",
-        anchor_texts=("Manager, Business Analytics",),
-    ),
-    RoleSpec(
-        role_id="petsmart_customer_insights_analyst",
-        company="PetSmart",
-        role="Customer Insights Analyst, Marketing Analytics",
-        preferred_bullets=2,
-        max_bullets=3,
-        max_words=60,
-        source_prefix="Petsmart/PetSmart - Customer Insights Analyst.md",
-        anchor_texts=("Customer Insights Analyst, Marketing Analytics",),
+        max_words=100,
+        source_prefixes=(
+            "Petsmart/PetSmart - Manager, Business Analytics.md",
+            "Petsmart/PetSmart - Customer Insights Analyst.md",
+        ),
+        anchor_texts=("Manager, Business Analytics", "Customer Insights Analyst"),
     ),
 )
 
@@ -127,6 +120,34 @@ class TailoredResume(BaseModel):
             if role.role_id == role_id:
                 return role
         raise KeyError(role_id)
+
+
+class FeedbackSignal(BaseModel):
+    """One deduplicated observation from the initial PDF match report."""
+
+    model_config = ConfigDict(extra="forbid")
+    signal_id: str
+    text: str
+
+
+class FeedbackDecision(BaseModel):
+    """Evidence-backed disposition of one match-report observation."""
+
+    model_config = ConfigDict(extra="forbid")
+    signal_id: str
+    status: Literal[
+        "addressed", "already_demonstrated", "unsupported", "outside_editable_scope", "deferred"
+    ]
+    rationale: str
+    source_files: list[str]
+
+
+class FeedbackRevision(BaseModel):
+    """Complete candidate resume and explanation of each feedback decision."""
+
+    model_config = ConfigDict(extra="forbid")
+    tailoring: TailoredResume
+    decisions: list[FeedbackDecision]
 
 
 def count_words(value: str) -> int:

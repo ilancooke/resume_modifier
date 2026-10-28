@@ -9,7 +9,7 @@ from zipfile import ZipFile
 from docx import Document
 from docx.oxml.ns import qn
 
-from docx_editor import load_resume_template, write_tailored_resume
+from docx_editor import DocxEditingError, load_resume_template, write_tailored_resume
 from resume_models import EvidenceBullet, JobMetadata, ROLE_SPECS, TailoredResume, TailoredRole
 
 
@@ -26,16 +26,18 @@ class DocxEditorTests(unittest.TestCase):
         document = Document()
         document.add_paragraph("ILAN COOKE")
         document.add_paragraph("[SUMMARY GOES HERE]")
+        document.add_paragraph("SKILLS")
+        document.add_paragraph("Languages: Python, SQL")
+        document.add_paragraph("SELECTED PROJECTS")
+        document.add_paragraph("Finbot: Event-Driven Financial Intelligence Platform")
+        document.add_paragraph("Fixed project description.")
         document.add_paragraph("WORK EXPERIENCE")
         document.add_paragraph("Data Scientist, Marketplace Fraud & Abuse | dates")
         document.add_paragraph("[BULLET POINTS GO HERE]", style="List Bullet")
-        document.add_paragraph("Business Intelligence Engineer | dates")
-        document.add_paragraph("Business Analyst | dates")
-        document.add_paragraph("Related Accounts Enforcement")
+        document.add_paragraph("Business Analyst / BI Engineer, Related Accounts Enforcement | dates")
         document.add_paragraph("[BULLET POINTS GO HERE]", style="List Bullet")
         document.add_paragraph("Manager, Business Analytics | dates")
-        document.add_paragraph("[BULLET POINTS GO HERE]", style="List Bullet")
-        document.add_paragraph("Customer Insights Analyst, Marketing Analytics | dates")
+        document.add_paragraph("Customer Insights Analyst | dates")
         document.add_paragraph("[BULLET POINTS GO HERE]", style="List Bullet")
         document.add_paragraph("EDUCATION")
         document.save(self.template_path)
@@ -81,6 +83,15 @@ class DocxEditorTests(unittest.TestCase):
         self.assertNotIn("[SUMMARY GOES HERE]", texts)
         self.assertNotIn("[BULLET POINTS GO HERE]", texts)
         self.assertIn("Evidence-based professional summary.", texts)
+        for fixed_text in (
+            "Languages: Python, SQL",
+            "Finbot: Event-Driven Financial Intelligence Platform",
+            "Fixed project description.",
+        ):
+            self.assertIn(fixed_text, texts)
+        manager_index = texts.index("Manager, Business Analytics | dates")
+        self.assertEqual(texts[manager_index + 1], "Customer Insights Analyst | dates")
+        self.assertTrue(texts[manager_index + 2].startswith("petsmart_analytics bullet"))
         for spec in ROLE_SPECS:
             generated = [text for text in texts if text.startswith(f"{spec.role_id} bullet")]
             self.assertEqual(len(generated), spec.preferred_bullets)
@@ -110,11 +121,26 @@ class DocxEditorTests(unittest.TestCase):
         descriptor = next(
             paragraph
             for paragraph in output.paragraphs
-            if paragraph.text == "Related Accounts Enforcement"
+            if paragraph.text == "Business Analyst / BI Engineer, Related Accounts Enforcement | dates"
         )
         self.assertIsNone(
             descriptor._p.find(qn("w:pPr") + "/" + qn("w:numPr"))
         )
+        self.assertTrue(descriptor.paragraph_format.keep_with_next)
+        for title in ("Manager, Business Analytics | dates", "Customer Insights Analyst | dates"):
+            paragraph = next(paragraph for paragraph in output.paragraphs if paragraph.text == title)
+            self.assertTrue(paragraph.paragraph_format.keep_with_next)
+
+    def test_requires_both_titles_above_shared_petsmart_placeholder(self) -> None:
+        document = Document(self.template_path)
+        for paragraph in document.paragraphs:
+            if paragraph.text == "Customer Insights Analyst | dates":
+                paragraph._p.getparent().remove(paragraph._p)
+                break
+        document.save(self.template_path)
+
+        with self.assertRaisesRegex(DocxEditingError, "Customer Insights Analyst"):
+            load_resume_template(self.template_path)
 
     def test_allows_fewer_than_preferred_bullets(self) -> None:
         template = load_resume_template(self.template_path)

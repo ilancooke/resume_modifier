@@ -25,13 +25,17 @@ NUMBERING_XML_PATH = "word/numbering.xml"
 KEEP_WITH_NEXT_PREFIXES = (
     "WORK EXPERIENCE",
     "AMAZON |",
+    "Amazon.com |",
     "Data Scientist, Marketplace Fraud & Abuse |",
     "Business Intelligence Engineer |",
     "Business Analyst |",
+    "Business Analyst / BI Engineer, Related Accounts Enforcement |",
     "Related Accounts Enforcement",
     "PETSMART |",
+    "PetSmart |",
     "Manager, Business Analytics |",
     "Customer Insights Analyst, Marketing Analytics |",
+    "Customer Insights Analyst |",
     "EDUCATION",
     "CERTIFICATIONS & TECHNOLOGIES",
 )
@@ -55,7 +59,7 @@ class ResumeTemplate:
 
 
 def load_resume_template(path: str | Path) -> ResumeTemplate:
-    """Validate the summary and four role-specific placeholder blocks."""
+    """Validate the summary and three experience-section placeholder blocks."""
 
     template_path = Path(path).expanduser().resolve()
     if not template_path.is_file():

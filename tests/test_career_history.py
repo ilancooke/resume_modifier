@@ -44,6 +44,29 @@ class CareerHistoryTests(unittest.TestCase):
         with self.assertRaisesRegex(CareerHistoryError, "Could not assign"):
             load_career_history(self.root)
 
+    def test_combines_both_petsmart_sources_into_one_section(self) -> None:
+        history = load_career_history(self.root)
+        expected_sources = {
+            "Petsmart/PetSmart - Manager, Business Analytics.md",
+            "Petsmart/PetSmart - Customer Insights Analyst.md",
+        }
+
+        self.assertEqual(
+            {file.relative_path for file in history.files_for_role("petsmart_analytics")},
+            expected_sources,
+        )
+        self.assertEqual(history.allowed_sources_by_role()["petsmart_analytics"], expected_sources)
+        context = history.model_context()
+        self.assertEqual(context.count("# ROLE EVIDENCE: PetSmart"), 1)
+        self.assertIn("# Manager work", context)
+        self.assertIn("# Analyst work", context)
+
+    def test_rejects_unrecognized_petsmart_source(self) -> None:
+        self._write("Petsmart/Other role.md", "# Unassigned evidence")
+
+        with self.assertRaisesRegex(CareerHistoryError, "Could not assign"):
+            load_career_history(self.root)
+
     def test_requires_evidence_for_every_role(self) -> None:
         (self.root / "Amazon/Data Scientist/project.md").unlink()
 

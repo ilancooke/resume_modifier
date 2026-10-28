@@ -31,7 +31,10 @@ def build_tailoring() -> TailoredResume:
                 bullets=[
                     EvidenceBullet(
                         text=f"{spec.role_id} bullet {index}",
-                        source_files=[f"{spec.source_prefix}evidence.md"],
+                        source_files=[
+                            f"{prefix}evidence.md" if prefix.endswith("/") else prefix
+                            for prefix in spec.source_prefixes
+                        ],
                     )
                     for index in range(1, spec.preferred_bullets + 1)
                 ],
@@ -96,6 +99,7 @@ class TailorResumeDiagnosticsTests(unittest.TestCase):
             jd=None,
             model="gpt-5.6-sol",
             dry_run=True,
+            skip_feedback_revision=False,
             show_diff=False,
             log_level="ERROR",
         )
@@ -114,10 +118,12 @@ class TailorResumeDiagnosticsTests(unittest.TestCase):
                 patch("tailor_resume.extract_candidate_name", return_value="Ilan Cooke"),
                 patch("tailor_resume.build_diff_preview", return_value="preview"),
                 patch("tailor_resume.write_diagnostics_file") as write_feedback,
+                patch("tailor_resume.run_feedback_revision") as revise,
             ):
                 self.assertEqual(main(), 0)
 
         write_feedback.assert_not_called()
+        revise.assert_not_called()
 
     def test_completed_run_writes_diagnostics(self) -> None:
         job_description_path = self.root / "job.txt"
@@ -135,6 +141,7 @@ class TailorResumeDiagnosticsTests(unittest.TestCase):
             jd=None,
             model="gpt-5.6-sol",
             dry_run=False,
+            skip_feedback_revision=True,
             show_diff=False,
             log_level="ERROR",
         )
@@ -158,7 +165,8 @@ class TailorResumeDiagnosticsTests(unittest.TestCase):
                 patch("tailor_resume.write_tailored_resume"),
                 patch("tailor_resume.export_docx_to_pdf"),
                 patch("tailor_resume.repair_pdf_overflow", return_value=tailoring),
-                patch("tailor_resume.run_tailored_match_validation", return_value="match report"),
+                patch("tailor_resume.run_tailored_match_validation", return_value=(object(), object())),
+                patch("tailor_resume.format_report", return_value="match report"),
                 patch("tailor_resume.write_diagnostics_file") as write_feedback,
             ):
                 self.assertEqual(main(), 0)
@@ -186,6 +194,7 @@ class TailorResumeDiagnosticsTests(unittest.TestCase):
             jd=None,
             model="gpt-5.6-sol",
             dry_run=False,
+            skip_feedback_revision=True,
             show_diff=False,
             log_level="ERROR",
         )

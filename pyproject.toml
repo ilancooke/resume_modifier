@@ -29,6 +29,7 @@ py-modules = [
   "experiment_judges",
   "experiment_prompts",
   "export_pdf",
+  "feedback_revision",
   "generation_metrics",
   "match_client",
   "match_prompts",
