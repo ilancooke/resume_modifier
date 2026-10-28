@@ -1,4 +1,4 @@
-"""CLI entry point for evidence-based resume drafting and Word PDF export."""
+"""Approved-bullet CLI and legacy helpers retained for narrative experiments."""
 
 from __future__ import annotations
 
@@ -12,18 +12,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from career_history import CareerHistory, CareerHistoryError, load_career_history
+from career_history import CareerHistory
 from config import ConfigError, load_config
 from docx_editor import (
     DocxEditingError,
     ResumeTemplate,
     build_diff_preview,
-    extract_candidate_name,
-    load_resume_template,
     write_tailored_resume,
 )
 from export_pdf import PdfLayoutError, export_docx_to_pdf, inspect_resume_pdf_layout
-from feedback_revision import FeedbackOutcome, format_feedback_outcome, run_feedback_revision
+from feedback_revision import FeedbackOutcome, format_feedback_outcome
 from match_client import ResumeMatchReport
 from openai_client import (
     ResumeTailoringError,
@@ -32,7 +30,7 @@ from openai_client import (
 )
 from resume_models import ROLE_SPECS, SUMMARY_MAX_WORDS, TailoredResume, count_words
 from resume_reader import ResumeText
-from validate_resume_match import format_report, validate_resume
+from validate_resume_match import validate_resume
 
 LOGGER = logging.getLogger(__name__)
 MAX_LAYOUT_REPAIR_ATTEMPTS = 3
@@ -50,7 +48,7 @@ class RoleMetadata:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Draft a tailored resume from Markdown career history, populate a DOCX template, "
+            "Select approved resume bullets, populate a DOCX template, "
             "and export it to PDF with Microsoft Word."
         )
     )
@@ -62,9 +60,9 @@ def parse_args() -> argparse.Namespace:
         help="Path to the resume stub DOCX. Defaults to resume_template_path in config.json.",
     )
     parser.add_argument(
-        "--career-history",
+        "--bullet-library",
         default=None,
-        help="Path to the career-history Markdown folder. Defaults to career_history_dir in config.json.",
+        help="Approved-bullet folder. Defaults to bullet_library_dir in config.json.",
     )
     parser.add_argument(
         "--jd",
@@ -74,12 +72,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         default="gpt-6.1-terra",
-        help="OpenAI model used for drafting, factual review, feedback revision, compression, and matching.",
+        help="OpenAI model used for Finbot relevance, selection, review, feedback, and matching.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Draft and fact-check content without files, PDF matching, or feedback revision.",
+        help="Decide Finbot, select and review approved bullets without files, PDF matching, or feedback revision.",
     )
     parser.add_argument(
         "--skip-feedback-revision",
@@ -103,163 +101,15 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     configure_logging(args.log_level)
-    feedback: FeedbackOutcome | None = None
+    # Experiments retain the legacy generation/compression functions below.
+    from approved_workflow import run_approved_workflow
 
     try:
-        config = load_config()
-        template_path = (
-            Path(args.resume).expanduser().resolve()
-            if args.resume
-            else config.resume_template_path
-        )
-        career_history_path = (
-            Path(args.career_history).expanduser().resolve()
-            if args.career_history
-            else config.career_history_dir
-        )
-        job_description_path = (
-            Path(args.jd).expanduser().resolve()
-            if args.jd
-            else config.job_description_path
-        )
-        job_description = job_description_path.read_text(encoding="utf-8").strip()
-        if not job_description:
-            raise ValueError("Job description file is empty.")
-
-        template = load_resume_template(template_path)
-        career_history = load_career_history(career_history_path)
-        LOGGER.info(
-            "Loaded %s career-history file(s); excluded: %s",
-            len(career_history.files),
-            ", ".join(career_history.excluded_files) or "none",
-        )
-
-        tailoring = request_tailoring(
-            career_history=career_history,
-            job_description=job_description,
-            model=args.model,
-        )
-        metadata = enrich_role_metadata(
-            metadata=RoleMetadata(
-                candidate_slug=slugify(extract_candidate_name(template)),
-                company_slug="unknown",
-                role_number_slug="unknown",
-            ),
-            tailoring=tailoring,
-        )
-        docx_output_path, pdf_output_path = derive_output_paths(
-            base_dir=config.tailored_resumes_dir,
-            metadata=metadata,
-        )
-
-        if args.dry_run:
-            print(format_content_report(tailoring))
-            print(build_diff_preview(template, tailoring))
-            LOGGER.info("Dry run complete. No files were written.")
-            return 0
-
-        if docx_output_path == template.path:
-            raise ValueError("Refusing to overwrite the source resume template.")
-
-        write_tailored_resume(
-            template=template,
-            tailoring=tailoring,
-            output_path=docx_output_path,
-        )
-        export_docx_to_pdf(docx_output_path, pdf_output_path)
-        tailoring = repair_pdf_overflow(
-            template=template,
-            docx_output_path=docx_output_path,
-            pdf_output_path=pdf_output_path,
-            tailoring=tailoring,
-            model=args.model,
-        )
-        diagnostics_output_path = derive_diagnostics_path(
-            base_dir=config.resume_diagnostics_dir,
-            metadata=metadata,
-        )
-        try:
-            resume_text, structured_report = run_tailored_match_validation(
-                tailored_pdf_path=pdf_output_path,
-                job_description=job_description,
-                model=args.model,
-            )
-        except Exception as exc:
-            write_diagnostics_file(
-                output_path=diagnostics_output_path,
-                content=format_diagnostics_report(
-                    tailoring=tailoring,
-                    template=template,
-                    metadata=metadata,
-                    model=args.model,
-                    docx_output_path=docx_output_path,
-                    pdf_output_path=pdf_output_path,
-                    match_report=(
-                        "Tailored Resume Match:\n"
-                        f"Match validation failed: {exc}"
-                    ),
-                    include_diff=args.show_diff,
-                ),
-            )
-            LOGGER.info(
-                "Saved diagnostics with match-validation failure to %s",
-                diagnostics_output_path,
-            )
-            raise
-        match_report = "Tailored Resume Match:\n" + format_report(structured_report, resume_text)
-        if not args.skip_feedback_revision:
-            # Keep a usable initial diagnostic if interrupted during the additional API calls.
-            write_diagnostics_file(
-                output_path=diagnostics_output_path,
-                content=format_diagnostics_report(
-                    tailoring=tailoring, template=template, metadata=metadata, model=args.model,
-                    docx_output_path=docx_output_path, pdf_output_path=pdf_output_path,
-                    match_report=match_report, include_diff=args.show_diff,
-                ) + "\nFeedback revision: pending. These files contain the initial resume.\n",
-            )
-            feedback = run_feedback_revision(
-                template=template, career_history=career_history, job_description=job_description,
-                tailoring=tailoring, initial_resume_text=resume_text, initial_report=structured_report,
-                docx_output_path=docx_output_path, pdf_output_path=pdf_output_path,
-                diagnostics_output_path=diagnostics_output_path, model=args.model,
-                repair_layout=repair_pdf_overflow,
-            )
-            tailoring = feedback.tailoring
-            match_report = "Tailored Resume Match:\n" + format_report(feedback.report, feedback.resume_text)
-        write_diagnostics_file(
-            output_path=diagnostics_output_path,
-            content=format_diagnostics_report(
-                tailoring=tailoring,
-                template=template,
-                metadata=metadata,
-                model=args.model,
-                docx_output_path=docx_output_path,
-                pdf_output_path=pdf_output_path,
-                match_report=match_report,
-                include_diff=args.show_diff,
-                feedback=feedback,
-            ),
-        )
-    except (
-        OSError,
-        ValueError,
-        ConfigError,
-        CareerHistoryError,
-        DocxEditingError,
-        ResumeTailoringError,
-        PdfLayoutError,
-        RuntimeError,
-    ) as exc:
+        return run_approved_workflow(args=args, config=load_config())
+    except (OSError, ValueError, ConfigError, DocxEditingError,
+            ResumeTailoringError, PdfLayoutError, RuntimeError) as exc:
         LOGGER.error("%s", exc)
         return 1
-
-    print(f"DOCX: {docx_output_path}")
-    print(f"PDF:  {pdf_output_path}")
-    print(f"Diagnostics: {diagnostics_output_path}")
-    if feedback is not None and feedback.error:
-        LOGGER.error("Feedback cycle did not complete successfully: %s. See diagnostics.", feedback.error)
-        return 1
-    return 0
 
 
 def request_tailoring(

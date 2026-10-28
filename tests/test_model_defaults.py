@@ -5,6 +5,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
+from approved_tailoring import decide_finbot, request_selection
 from match_client import generate_resume_match_report
 from openai_client import (
     compress_tailored_resume,
@@ -22,6 +23,8 @@ DEFAULT_MODEL = "gpt-6.1-terra"
 class ModelDefaultTests(unittest.TestCase):
     def test_callable_defaults_use_gpt_6_1_terra(self) -> None:
         for function in (
+            decide_finbot,
+            request_selection,
             generate_tailored_resume,
             generate_tailored_resume_with_trace,
             compress_tailored_resume,

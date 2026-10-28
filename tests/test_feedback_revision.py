@@ -3,14 +3,12 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from contextlib import ExitStack, redirect_stdout
-from io import StringIO
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from career_history import CareerHistory, CareerHistoryFile
-from config import AppConfig
 from feedback_revision import collect_feedback_signals, format_feedback_outcome, run_feedback_revision
 from match_client import DimensionScore, JobCriteriaSummary, ResumeMatchReport
 from match_prompts import MATCH_DIMENSIONS
@@ -20,7 +18,6 @@ from resume_models import (
     TailoredResume, TailoredRole,
 )
 from resume_reader import ResumeText
-from tailor_resume import main
 
 
 INCIDENT_SOURCE = "Amazon/Data Scientist/MLOps and Operational Excellence.md"
@@ -320,49 +317,6 @@ class FeedbackRevisionTests(unittest.TestCase):
         self.assertEqual(self.request.call_count, 2)
         self.evaluator.assert_called_once()
 
-    def run_cli(self, *, fail_revision=False):
-        self.services()
-        if fail_revision:
-            self.request.side_effect = RuntimeError("Feedback API unavailable")
-        args = SimpleNamespace(resume=None, career_history=None, jd=None, model="gpt-6.1-terra",
-                               dry_run=False, show_diff=False, log_level="ERROR", skip_feedback_revision=False)
-        jd = self.root / "job.txt"
-        jd.write_text("Safety incident response role.")
-        config = AppConfig(self.template.path, self.root, jd, self.root, self.root)
-        with ExitStack() as stack, redirect_stdout(StringIO()):
-            for target, value in (
-                ("parse_args", args), ("load_config", config), ("load_resume_template", self.template),
-                ("load_career_history", self.history), ("request_tailoring", self.original),
-                ("extract_candidate_name", "Candidate"), ("derive_output_paths", (self.docx, self.pdf)),
-                ("derive_diagnostics_path", self.diagnostics),
-                ("run_tailored_match_validation", (self.initial_text, self.initial_report)),
-            ):
-                stack.enter_context(patch(f"tailor_resume.{target}", return_value=value))
-            stack.enter_context(patch("tailor_resume.configure_logging"))
-            stack.enter_context(patch("tailor_resume.write_tailored_resume"))
-            stack.enter_context(patch("tailor_resume.export_docx_to_pdf"))
-            stack.enter_context(patch("tailor_resume.repair_pdf_overflow", side_effect=lambda **kw: kw["tailoring"]))
-            result = main()
-        return result, self.diagnostics.read_text()
-
-    def test_cli_default_cycle_writes_diagnostics_for_selected_final_pdf(self):
-        result, diagnostics = self.run_cli()
-        self.assertEqual(result, 0)
-        self.assertIn("Status: revised", diagnostics)
-        self.assertIn("Initial Resume Match:", diagnostics)
-        self.assertIn("Overall: 56/70", diagnostics)
-        self.assertIn("Tailored Resume Match:\nOverall: 57/70", diagnostics)
-        self.assertIn("Investigated production incidents", diagnostics)
-        self.assertNotIn("Feedback revision: pending", diagnostics)
-
-    def test_cli_revision_failure_returns_nonzero_and_initial_diagnostics(self):
-        result, diagnostics = self.run_cli(fail_revision=True)
-        self.assertEqual(result, 1)
-        self.assertIn("Status: failed", diagnostics)
-        self.assertIn("Feedback API unavailable", diagnostics)
-        self.assertIn("Tailored Resume Match:\nOverall: 56/70", diagnostics)
-        self.assertEqual(self.docx.read_bytes(), b"initial docx")
-        self.assertEqual(self.pdf.read_bytes(), b"initial pdf")
 
 
 if __name__ == "__main__":

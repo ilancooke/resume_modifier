@@ -53,9 +53,13 @@ class ResumeTemplate:
     paragraph_texts: tuple[str, ...]
     summary_index: int
     bullet_indices: tuple[int, ...]
+    selected_project_indices: tuple[int, ...] = ()
 
     def full_text(self) -> str:
         return "\n".join(text for text in self.paragraph_texts if text)
+
+    def finbot_text(self) -> str:
+        return "\n".join(self.paragraph_texts[index] for index in self.selected_project_indices)
 
 
 def load_resume_template(path: str | Path) -> ResumeTemplate:
@@ -99,11 +103,22 @@ def load_resume_template(path: str | Path) -> ResumeTemplate:
             )
         previous_index = bullet_index
 
+    project_headings = [i for i, text in enumerate(paragraph_texts) if text == "SELECTED PROJECTS"]
+    project_indices: tuple[int, ...] = ()
+    if project_headings:
+        work_headings = [i for i, text in enumerate(paragraph_texts) if text == "WORK EXPERIENCE"]
+        if len(project_headings) != 1 or len(work_headings) != 1 or work_headings[0] <= project_headings[0]:
+            raise DocxEditingError("Expected one Selected Projects block before Work Experience.")
+        project_indices = tuple(range(project_headings[0], work_headings[0]))
+        if not any(paragraph_texts[i].startswith("Finbot:") for i in project_indices):
+            raise DocxEditingError("Selected Projects must identify the Finbot project.")
+
     return ResumeTemplate(
         path=template_path,
         paragraph_texts=paragraph_texts,
         summary_index=summary_indices[0],
         bullet_indices=bullet_indices,
+        selected_project_indices=project_indices,
     )
 
 
@@ -112,6 +127,8 @@ def write_tailored_resume(
     template: ResumeTemplate,
     tailoring: TailoredResume,
     output_path: str | Path,
+    include_finbot: bool = True,
+    role_bullet_limits: dict[str, int] | None = None,
 ) -> Path:
     """Copy the template package and replace only its editable OOXML slots."""
 
@@ -141,9 +158,10 @@ def write_tailored_resume(
     for spec, placeholder, role in zip(
         ROLE_SPECS, bullet_paragraphs, tailoring.roles, strict=True
     ):
-        if not spec.valid_bullet_count(len(role.bullets)):
+        limit = spec.max_bullets if role_bullet_limits is None else role_bullet_limits[spec.role_id]
+        if not 0 <= len(role.bullets) <= limit:
             raise DocxEditingError(
-                f"{spec.role_id} allows at most {spec.max_bullets} bullets, "
+                f"{spec.role_id} allows at most {limit} bullets, "
                 f"got {len(role.bullets)}."
             )
         parent = placeholder.getparent()
@@ -154,6 +172,11 @@ def write_tailored_resume(
             _replace_paragraph_text(cloned_paragraph, bullet.text.strip())
             _set_bullet_numbering(cloned_paragraph, bullet_numbering_id)
             parent.insert(insertion_index + offset, cloned_paragraph)
+
+    if not include_finbot:
+        for index in template.selected_project_indices:
+            paragraph = paragraphs[index]
+            paragraph.getparent().remove(paragraph)
 
     final_text = "\n".join(_paragraph_text(paragraph) for paragraph in _body_paragraphs(root))
     if SUMMARY_PLACEHOLDER in final_text or BULLETS_PLACEHOLDER in final_text:
@@ -168,11 +191,13 @@ def write_tailored_resume(
     return output_path
 
 
-def build_diff_preview(template: ResumeTemplate, tailoring: TailoredResume) -> str:
+def build_diff_preview(template: ResumeTemplate, tailoring: TailoredResume, *, include_finbot: bool = True) -> str:
     """Generate a unified preview of placeholder-to-content changes."""
 
     before = [f"Summary: {SUMMARY_PLACEHOLDER}"]
     after = [f"Summary: {tailoring.summary.strip()}"]
+    if not include_finbot:
+        before.extend(template.finbot_text().splitlines())
     for spec, role in zip(ROLE_SPECS, tailoring.roles, strict=True):
         before.extend([f"{spec.role}: {BULLETS_PLACEHOLDER}"])
         after.extend(f"{spec.role}: {bullet.text.strip()}" for bullet in role.bullets)

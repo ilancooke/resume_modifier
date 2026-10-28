@@ -20,6 +20,9 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 py-modules = [
+  "approved_tailoring",
+  "approved_workflow",
+  "bullet_library",
   "career_history",
   "anthropic_client",
   "config",

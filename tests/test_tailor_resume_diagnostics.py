@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-from contextlib import redirect_stdout
-from io import StringIO
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from config import AppConfig
 from resume_models import EvidenceBullet, JobMetadata, ROLE_SPECS, TailoredResume, TailoredRole
 from tailor_resume import (
     RoleMetadata,
@@ -83,152 +80,27 @@ class TailorResumeDiagnosticsTests(unittest.TestCase):
         self.assertIn("Tailored Resume Match:\nOverall: 60/70", report)
         self.assertNotIn("Placeholder-to-content diff:", report)
 
-    def test_dry_run_does_not_write_diagnostics(self) -> None:
-        job_description_path = self.root / "job.txt"
-        job_description_path.write_text("Example job description", encoding="utf-8")
-        config = AppConfig(
-            resume_template_path=self.root / "stub.docx",
-            career_history_dir=self.root / "career-history",
-            job_description_path=job_description_path,
-            tailored_resumes_dir=self.root / "roles",
-            resume_diagnostics_dir=self.root / "resume_diagnostics",
-        )
-        args = SimpleNamespace(
-            resume=None,
-            career_history=None,
-            jd=None,
-            model="gpt-5.6-sol",
-            dry_run=True,
-            skip_feedback_revision=False,
-            show_diff=False,
-            log_level="ERROR",
-        )
+    def test_main_routes_to_approved_workflow(self):
+        args = SimpleNamespace(log_level="ERROR")
+        with (
+            patch("tailor_resume.parse_args", return_value=args),
+            patch("tailor_resume.configure_logging"),
+            patch("tailor_resume.load_config", return_value="config"),
+            patch("approved_workflow.run_approved_workflow", return_value=0) as workflow,
+        ):
+            self.assertEqual(main(), 0)
+        workflow.assert_called_once_with(args=args, config="config")
 
-        with redirect_stdout(StringIO()):
-            with (
-                patch("tailor_resume.parse_args", return_value=args),
-                patch("tailor_resume.configure_logging"),
-                patch("tailor_resume.load_config", return_value=config),
-                patch(
-                    "tailor_resume.load_resume_template",
-                    return_value=SimpleNamespace(path=config.resume_template_path),
-                ),
-                patch("tailor_resume.load_career_history", return_value=SimpleNamespace(files=[], excluded_files=[])),
-                patch("tailor_resume.request_tailoring", return_value=build_tailoring()),
-                patch("tailor_resume.extract_candidate_name", return_value="Ilan Cooke"),
-                patch("tailor_resume.build_diff_preview", return_value="preview"),
-                patch("tailor_resume.write_diagnostics_file") as write_feedback,
-                patch("tailor_resume.run_feedback_revision") as revise,
-            ):
-                self.assertEqual(main(), 0)
-
-        write_feedback.assert_not_called()
-        revise.assert_not_called()
-
-    def test_completed_run_writes_diagnostics(self) -> None:
-        job_description_path = self.root / "job.txt"
-        job_description_path.write_text("Example job description", encoding="utf-8")
-        config = AppConfig(
-            resume_template_path=self.root / "stub.docx",
-            career_history_dir=self.root / "career-history",
-            job_description_path=job_description_path,
-            tailored_resumes_dir=self.root / "roles",
-            resume_diagnostics_dir=self.root / "resume_diagnostics",
-        )
-        args = SimpleNamespace(
-            resume=None,
-            career_history=None,
-            jd=None,
-            model="gpt-5.6-sol",
-            dry_run=False,
-            skip_feedback_revision=True,
-            show_diff=False,
-            log_level="ERROR",
-        )
-        tailoring = build_tailoring()
-        docx_path = self.root / "roles" / "example" / "resume.docx"
-        pdf_path = docx_path.with_suffix(".pdf")
-
-        with redirect_stdout(StringIO()):
-            with (
-                patch("tailor_resume.parse_args", return_value=args),
-                patch("tailor_resume.configure_logging"),
-                patch("tailor_resume.load_config", return_value=config),
-                patch(
-                    "tailor_resume.load_resume_template",
-                    return_value=SimpleNamespace(path=config.resume_template_path),
-                ),
-                patch("tailor_resume.load_career_history", return_value=SimpleNamespace(files=[], excluded_files=[])),
-                patch("tailor_resume.request_tailoring", return_value=tailoring),
-                patch("tailor_resume.extract_candidate_name", return_value="Ilan Cooke"),
-                patch("tailor_resume.derive_output_paths", return_value=(docx_path, pdf_path)),
-                patch("tailor_resume.write_tailored_resume"),
-                patch("tailor_resume.export_docx_to_pdf"),
-                patch("tailor_resume.repair_pdf_overflow", return_value=tailoring),
-                patch("tailor_resume.run_tailored_match_validation", return_value=(object(), object())),
-                patch("tailor_resume.format_report", return_value="match report"),
-                patch("tailor_resume.write_diagnostics_file") as write_feedback,
-            ):
-                self.assertEqual(main(), 0)
-
-        write_feedback.assert_called_once()
-        self.assertEqual(
-            write_feedback.call_args.kwargs["output_path"],
-            self.root / "resume_diagnostics" / "ilan_cooke_example_123.diagnostics.txt",
-        )
-        self.assertIn("match report", write_feedback.call_args.kwargs["content"])
-
-    def test_match_validation_failure_still_writes_diagnostics(self) -> None:
-        job_description_path = self.root / "job.txt"
-        job_description_path.write_text("Example job description", encoding="utf-8")
-        config = AppConfig(
-            resume_template_path=self.root / "stub.docx",
-            career_history_dir=self.root / "career-history",
-            job_description_path=job_description_path,
-            tailored_resumes_dir=self.root / "roles",
-            resume_diagnostics_dir=self.root / "resume_diagnostics",
-        )
-        args = SimpleNamespace(
-            resume=None,
-            career_history=None,
-            jd=None,
-            model="gpt-5.6-sol",
-            dry_run=False,
-            skip_feedback_revision=True,
-            show_diff=False,
-            log_level="ERROR",
-        )
-        tailoring = build_tailoring()
-        docx_path = self.root / "roles" / "example" / "resume.docx"
-        pdf_path = docx_path.with_suffix(".pdf")
-
-        with redirect_stdout(StringIO()):
-            with (
-                patch("tailor_resume.parse_args", return_value=args),
-                patch("tailor_resume.configure_logging"),
-                patch("tailor_resume.load_config", return_value=config),
-                patch(
-                    "tailor_resume.load_resume_template",
-                    return_value=SimpleNamespace(path=config.resume_template_path),
-                ),
-                patch("tailor_resume.load_career_history", return_value=SimpleNamespace(files=[], excluded_files=[])),
-                patch("tailor_resume.request_tailoring", return_value=tailoring),
-                patch("tailor_resume.extract_candidate_name", return_value="Ilan Cooke"),
-                patch("tailor_resume.derive_output_paths", return_value=(docx_path, pdf_path)),
-                patch("tailor_resume.write_tailored_resume"),
-                patch("tailor_resume.export_docx_to_pdf"),
-                patch("tailor_resume.repair_pdf_overflow", return_value=tailoring),
-                patch(
-                    "tailor_resume.run_tailored_match_validation",
-                    side_effect=RuntimeError("match service unavailable"),
-                ),
-                patch("tailor_resume.write_diagnostics_file") as write_feedback,
-                patch("tailor_resume.LOGGER.error"),
-            ):
-                self.assertEqual(main(), 1)
-
-        write_feedback.assert_called_once()
-        self.assertIn("Match validation failed: match service unavailable", write_feedback.call_args.kwargs["content"])
+    def test_main_reports_workflow_errors(self):
+        with (
+            patch("tailor_resume.parse_args", return_value=SimpleNamespace(log_level="ERROR")),
+            patch("tailor_resume.configure_logging"),
+            patch("tailor_resume.load_config", return_value="config"),
+            patch("approved_workflow.run_approved_workflow", side_effect=ValueError("Invalid library")),
+            patch("tailor_resume.LOGGER.error") as log,
+        ):
+            self.assertEqual(main(), 1)
+        self.assertIn("Invalid library", str(log.call_args))
 
 
 if __name__ == "__main__":

@@ -1,59 +1,65 @@
 # Resume Modifier
 
-Local Python CLI that drafts a job-specific resume from a structured Markdown career history, fills a formatted Word template, exports it to PDF with Microsoft Word for Mac, enforces a two-page limit, and evaluates the finished resume against the job description.
+Local Python CLI that selects job-specific accomplishments from an approved bullet library,
+fills a formatted Word template, exports it to PDF with Microsoft Word for Mac, enforces a two-page
+limit, and evaluates the finished resume against the job description.
 
 ## Workflow
 
-For each run, the tool:
+For each standard CLI run, the tool:
 
-1. Recursively reads the configured career-history folder.
-2. Assigns each Markdown file to a fixed resume role from its relative path.
-3. Excludes the root `Template.md` questionnaire from model context.
-4. Asks OpenAI to select the strongest relevant projects and draft the summary and bullets.
-5. Runs a separate OpenAI factuality pass against the original Markdown evidence.
-6. Enforces role identity, maximum bullet counts, and source-attribution requirements locally.
-7. Copies the resume stub and replaces its placeholders without rewriting other DOCX package parts.
-8. Exports the result to PDF through Microsoft Word.
-9. Conservatively compresses the content when necessary to meet the hard two-page limit.
-10. Evaluates the rendered PDF against the job description.
-11. Uses the match report and full career history for one targeted revision, when feedback exists.
-12. Independently fact-checks changed content against the full career history.
-13. Renders the candidate, enforces two pages, and evaluates the revised PDF once.
-14. Publishes the validated revision and saves the initial and final reports plus revision decisions.
+1. Loads the job description, template, and approved Markdown bullet library.
+2. Makes its **first content decision**: keep the complete Finbot Selected Projects section or
+   remove it entirely. This independent call also classifies the job as Applied ML / Data Science,
+   AI Engineering, or Hybrid and identifies its 3–5 priority requirements.
+3. **Locks the Finbot decision for the entire run.** Later selection, review, page fitting, and
+   feedback cannot reverse it, reduce the section, or edit its wording. A new run makes a new decision.
+4. Selects approved experience bullet IDs, ranks up to ten further relevant reserve bullets, and
+   writes a supported summary of at most 45 words.
+5. Independently reviews the selection, summary factuality, relevance, redundancy, and project
+   exceptions against the complete approved library and fixed template evidence.
+6. Locally validates the IDs, correct role attribution, project limits, and evidence references.
+   Experience text is retrieved directly from the library and reused **verbatim**; no model supplies
+   replacement bullet text. Skills, employment titles and dates, education, and certifications stay fixed.
+7. Fills the Word placeholders, retains or removes the complete Finbot block, and exports through Word.
+8. Checks the actual PDF against the hard two-page limit. Overflow removes the lowest-priority
+   eligible approved bullet and re-renders until it fits or no valid reduction remains. It never
+   rewrites bullets, changes Skills or Finbot, shrinks fonts, or adds filler. Once the draft fits, it
+   tries the pre-reviewed reserves in rank order, adding only bullets that also fit within two pages.
+   Rejected trials preserve the last valid draft; shorter later reserves can still be tried.
+9. Evaluates the rendered PDF against the job description.
+10. When feedback exists, performs at most one targeted selection revision and an independent review
+    of changed content, under the same locked decision and approved-library constraints.
+11. Renders and page-fits a changed candidate, evaluates its PDF once, and only then publishes it.
+12. Prints a concise tailoring summary and saves the final selections, provenance, decisions,
+    initial/final reports, page-fitting changes, and content diff in diagnostics and a unique archive.
 
-The feedback cycle is enabled by default. It searches all career-history files, including omitted
-details in files already cited, and can expand, add, or replace bullets or refine the summary.
-Each feedback item receives a decision: addressed, already demonstrated, unsupported, outside the
-editable template sections, or deferred with a reason. Unsupported experience is not added.
+The model normally selects one bullet per project. A second is allowed for substantially different,
+highly relevant accomplishments and must have a recorded justification. Individual projects cannot
+supply more than two. Explicit cross-project categories, currently **MLOps and Operational Excellence**
+and **Production Feature Engineering Examples**, may supply multiple distinct accomplishments.
 
-A changed resume normally adds three API calls: targeted revision, factuality review, and final PDF
-matching, plus compression calls if needed. Both revision and factuality review receive the full
-career history; matching receives only extracted PDF text and the job description. Compression
-receives the current resume, overflow information, and the supported repair objectives. There is no
-repeat revision loop and no automatic selection based solely on a higher numerical match score.
+Amazon Data Scientist receives the most experience space. With Finbot kept, initial soft guidance is
+about 6–7 Data Scientist bullets; with it removed, about 9–11 when the additional accomplishments
+strengthen the application. These are starting budgets; additional relevant reserves can be admitted
+when the rendered layout has room. There is no fixed eight-bullet Data Scientist ceiling.
+BA/BIE allows at most two bullets and the shared PetSmart section at most four. These are limits,
+not quotas; final selection depends on relevance and actual pagination. Approved text is never
+rewritten to meet a word target.
 
-When no feedback exists, no additional model calls are made. When the proposed resume is unchanged,
-the factuality, export, and final-match stages are skipped. If the factuality reviewer restores the
-original resume, export and final matching are skipped. Revision failures retain the initial files,
-are recorded in diagnostics, and cause a nonzero exit status.
+The initial content stages use three model calls: Finbot relevance, selection/summary, and independent
+review. PDF matching adds one call. A changed feedback revision normally adds three calls: selection,
+independent review, and final PDF matching. A locally invalid selection (for example, feedback citing
+a removed bullet) receives at most one corrective call; a second failure retains the normal failure
+behavior. Invalid parsed selections and validation errors are archived in `validation_attempts.json`.
+Page fitting, including reserve trials, makes no API calls. No feedback means no
+revision calls; unchanged proposals skip review, export, and final matching. There is no repeated
+revision loop and no automatic rejection solely because a numerical match score decreases.
 
-The generated structure prioritizes the strongest nonredundant evidence:
-
-- Summary: up to approximately 45 words
-- Amazon Data Scientist: prefer about 7 bullets; maximum 8; approximately 260 words or fewer
-- Amazon Business Analyst / Business Intelligence Engineer: prefer about 1 bullet; maximum 2;
-  approximately 70 words or fewer
-- PetSmart combined Manager, Business Analytics / Customer Insights Analyst: prefer about 3 bullets;
-  maximum 4; approximately 100 words or fewer, drawn from either or both roles' source files
-
-The two-page limit, factuality, correct role history, and maximum bullet counts are hard constraints.
-Preferred bullet counts and word ceilings are guides, not quotas: the workflow may use fewer bullets
-when another accomplishment would not strengthen the resume.
-
-Most bullets should be 25-40 words. For Amazon Data Scientist, prefer 30-40 words when supported
-detail strengthens the evidence, allowing roughly 45 words when substantive context warrants it.
-For other roles, prefer 25-35 words when sufficient; shorter bullets remain acceptable. Preserve
-useful methods, operational responsibilities, collaboration, and outcomes without adding filler.
+Each feedback item receives an evidenced decision: addressed, already demonstrated, unsupported,
+outside the editable scope, or deferred with a reason. Requests to change Skills or the locked
+Finbot inclusion are outside scope. Unsupported experience cannot be added. Revision failures keep
+the initial files, are recorded in diagnostics, and return a nonzero exit status.
 
 ## Requirements
 
@@ -90,23 +96,41 @@ Edit `config.json`:
 ```json
 {
   "resume_template_path": "/Users/ilan/Documents/resumes/stub/ilan_cooke_resume_stub.docx",
-  "career_history_dir": "/Users/ilan/Documents/ilan vault/career history",
+  "bullet_library_dir": "/Users/ilan/Documents/ilan vault/career history bullet points",
   "job_description_path": "/Users/ilan/Documents/resumes/job_description/role.txt",
   "tailored_resumes_dir": "/Users/ilan/Documents/resumes/roles",
   "resume_diagnostics_dir": "/Users/ilan/Documents/resumes/resume_diagnostics"
 }
 ```
 
-Career-history assignments are derived from these relative paths:
+Approved-library assignments are derived from these relative paths:
 
 - `Amazon/Data Scientist/**/*.md`
 - `Amazon/BA-BIE/**/*.md`
-- `Petsmart/PetSmart - Manager, Business Analytics.md`
-- `Petsmart/PetSmart - Customer Insights Analyst.md`
+- `Petsmart/PetSmart_Bullets.md`
 
-An unrecognized Markdown path is treated as an error so new evidence is not silently assigned to the wrong role.
-Both PetSmart files are assigned to the shared `petsmart_analytics` section; source attribution
-continues to identify the individual supporting files.
+Each file contains a title, an optional `Candidate resume bullets.` introduction, project/role
+headings, and complete approved bullets, one per line:
+
+```markdown
+# Amazon — Data Scientist
+
+Candidate resume bullets.
+
+## Relationship Risk Model
+
+- **ADS-REL-01:** Approved resume-ready accomplishment, preserved verbatim.
+```
+
+IDs must be globally unique and use `ADS-` for Amazon Data Scientist, `ABA-` for Amazon BA/BIE,
+and `PM-` or `PC-` for the shared PetSmart section. Malformed entries, unknown file-role paths,
+duplicate IDs, empty files, and missing role libraries are errors. Project headings define selection
+groups. PetSmart's Manager and Customer Insights Analyst headings preserve the supporting subrole.
+Do not store narrative career-history files in this directory.
+
+`career_history_dir`, if retained in `config.json`, is optional legacy configuration and is not read
+by the standard tailoring workflow. The experiment runner continues to use its own YAML-configured
+narrative career-history inputs and original generation/compression pipeline.
 
 The DOCX template must contain one `[SUMMARY GOES HERE]` paragraph and three
 `[BULLET POINTS GO HERE]` paragraphs, in this order:
@@ -116,7 +140,10 @@ The DOCX template must contain one `[SUMMARY GOES HERE]` paragraph and three
 3. PetSmart, with both Manager, Business Analytics and Customer Insights Analyst titles above one
    shared bullet placeholder.
 
-Skills, Selected Projects, and other content outside these placeholders are preserved.
+The optional Finbot block must start with `SELECTED PROJECTS`, contain a `Finbot:` project title,
+and end immediately before `WORK EXPERIENCE`. Its heading, title, and all three existing bullets
+are kept together or removed together. Skills and other fixed template content are preserved.
+The source DOCX and bullet-library files are never modified.
 
 ## Usage
 
@@ -131,13 +158,14 @@ Override inputs:
 ```bash
 python tailor_resume.py \
   --template /path/to/resume_stub.docx \
-  --career-history /path/to/career_history \
+  --bullet-library /path/to/approved_bullets \
   --jd /path/to/job_description.txt
 ```
 
 Useful options:
 
-- `--dry-run`: draft and fact-check without files, PDF matching, or feedback revision
+- `--dry-run`: decide Finbot, select and independently review bullets, and print the summary/content
+  preview without writing files, exporting PDFs, matching, or feedback revision (three API calls)
 - `--skip-feedback-revision`: retain the initial resume and its match report without the extra cycle
 - `--show-diff`: show the placeholder-to-content preview
 - `--model`: choose the OpenAI model; default is `gpt-6.1-terra`
@@ -160,22 +188,34 @@ Each completed run also writes its evidence-attribution, optional diff, and tail
 
 The source template is never modified.
 
-For an attempted feedback revision, the diagnostics link to a unique archive under:
+Each non-dry run links its diagnostics to a unique selection archive under:
 
 ```text
-<resume_diagnostics_dir>/<candidate>_<company>_<job_id>.diagnostics.feedback_runs/<run>/
+<resume_diagnostics_dir>/<candidate>_<company>_<job_id>.diagnostics.selection_runs/<run>/
 ```
 
-It retains the initial DOCX/PDF, attributed content and structured match report, proposal and audit
-when available, staged candidate files, candidate match report, and outcome. The main diagnostics
-show feedback decisions and sources, the initial report, the actual initial-to-final content diff,
-score differences, and the selected PDF's final report. Decisions describe the proposal/audit;
-remaining weak signals must be read from the final PDF report because compression may affect wording.
+The archive retains the immutable plan, approved-library snapshot, job description, template hash,
+draft and reviewed selections, fitted initial DOCX/PDF and match report, feedback signals, proposal
+and audit when available, candidate files/report, and outcome. The main diagnostics describe the
+final selected IDs, their source files and project headings, initial and final reports, score change,
+page-fitting removals, reserve additions/deferrals, and actual initial-to-final content diff. Feedback decisions describe the
+proposal/audit; read the final PDF report for remaining gaps because fitting may remove selections.
 Candidate files replace the standard outputs only after export, page fitting, and final matching
-succeed. Initial files are restored if publication fails partway through.
+succeed. Both previous outputs are restored if publication fails partway through.
 
-Standalone matching and experiment treatments retain their existing behavior; they do not invoke
-the standard CLI's additional feedback cycle.
+Standalone matching and experiment treatments retain their existing behavior. Experiments still
+measure narrative generation treatments; they do not invoke this approved-selection workflow or
+its additional feedback cycle.
+
+## Local tests
+
+```bash
+python -m unittest discover -s tests -q
+```
+
+Tests mock model calls and Word export. They verify selection constraints, immutable Finbot policy,
+verbatim bullet reuse, fixed Skills/retained-project XML, page-fitting progress, and failure recovery
+without API charges. Real pagination requires a separate Word export on macOS.
 
 ## Standalone match validation
 

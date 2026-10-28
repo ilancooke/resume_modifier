@@ -14,10 +14,11 @@ class AppConfig:
     """User-editable application configuration."""
 
     resume_template_path: Path
-    career_history_dir: Path
+    career_history_dir: Path | None
     job_description_path: Path
     tailored_resumes_dir: Path
     resume_diagnostics_dir: Path
+    bullet_library_dir: Path | None = None
 
 
 class ConfigError(RuntimeError):
@@ -42,9 +43,9 @@ def load_config(path: Path | None = None) -> AppConfig:
         )
 
     career_history_dir = payload.get("career_history_dir")
-    if not isinstance(career_history_dir, str) or not career_history_dir.strip():
+    if career_history_dir is not None and (not isinstance(career_history_dir, str) or not career_history_dir.strip()):
         raise ConfigError(
-            "Config file must define a non-empty string for 'career_history_dir'."
+            "Optional 'career_history_dir' must be a non-empty string."
         )
 
     job_description_path = payload.get("job_description_path")
@@ -65,10 +66,15 @@ def load_config(path: Path | None = None) -> AppConfig:
             "Config file must define a non-empty string for 'resume_diagnostics_dir'."
         )
 
+    bullet_library_dir = payload.get("bullet_library_dir")
+    if not isinstance(bullet_library_dir, str) or not bullet_library_dir.strip():
+        raise ConfigError("Config file must define a non-empty string for 'bullet_library_dir'.")
+
     return AppConfig(
         resume_template_path=Path(resume_template_path).expanduser().resolve(),
-        career_history_dir=Path(career_history_dir).expanduser().resolve(),
+        career_history_dir=Path(career_history_dir).expanduser().resolve() if career_history_dir else None,
         job_description_path=Path(job_description_path).expanduser().resolve(),
         tailored_resumes_dir=Path(output_dir).expanduser().resolve(),
         resume_diagnostics_dir=Path(diagnostics_dir).expanduser().resolve(),
+        bullet_library_dir=Path(bullet_library_dir).expanduser().resolve(),
     )
