@@ -22,9 +22,12 @@ from docx_editor import ResumeTemplate, build_diff_preview, extract_candidate_na
 from export_pdf import PdfLayoutError, export_docx_to_pdf, inspect_resume_pdf_layout
 from feedback_revision import _atomic_copy, collect_feedback_signals
 from resume_models import count_words
+from resume_layout import estimate_resume_space
 from validate_resume_match import format_report, validate_resume
 
 LOGGER = logging.getLogger(__name__)
+MIN_EXPANSION_SPACE_PT = 72.0
+EXPANSION_SAFETY_PT = 18.0
 
 
 def _write_json(path: Path, value) -> None:
@@ -48,8 +51,8 @@ def format_tailoring_summary(plan: LockedPlan, selection: Selection) -> str:
 
 def render_and_fit(*, selection: Selection, library: BulletLibrary, plan: LockedPlan,
                    template: ResumeTemplate, docx_path: Path, pdf_path: Path,
-                   changes: list[str]) -> Selection:
-    """Fit overflow, then try pre-reviewed relevant reserves using actual Word pagination."""
+                   changes: list[str], allow_expansion: bool = True) -> Selection:
+    """Enforce two pages, then optionally make one measured batch expansion."""
     initial_count = len(selection.priority_order)
     for attempt in range(initial_count + 1):
         # Validate content here too: no caller can bypass library constraints during export.
@@ -62,6 +65,9 @@ def render_and_fit(*, selection: Selection, library: BulletLibrary, plan: Locked
         export_docx_to_pdf(docx_path, pdf_path)
         layout = inspect_resume_pdf_layout(pdf_path)
         if not layout.has_overflow:
+            if not allow_expansion:
+                LOGGER.info("Automatic expansion skipped after feedback; preserving the reviewed selection.")
+                return selection
             return _fill_available_space(selection=selection, library=library, plan=plan,
                                          template=template, docx_path=docx_path, pdf_path=pdf_path,
                                          changes=changes)
@@ -87,36 +93,94 @@ def _fill_available_space(*, selection: Selection, library: BulletLibrary, plan:
                           changes: list[str]) -> Selection:
     if not selection.reserve_bullets:
         return selection
-    # Trial files never overwrite the last known two-page candidate. At most ten trials,
-    # with no extra API calls, font changes, or invention of accomplishments to fill space.
-    with tempfile.TemporaryDirectory(prefix="reserve-fit-", dir=docx_path.parent) as temp:
-        trial_docx, trial_pdf = Path(temp) / "trial.docx", Path(temp) / "trial.pdf"
-        for reserve in selection.reserve_bullets:
-            try:
-                candidate = add_reserve(selection, reserve, library=library, plan=plan)
-            except RuntimeError as exc:
-                changes.append(f"Deferred reserve {reserve.bullet_id}: {exc}")
-                continue
-            LOGGER.info("Checking whether relevant reserve %s fits within two pages.", reserve.bullet_id)
-            try:
-                write_tailored_resume(
-                    template=template, tailoring=assemble_resume(candidate, library=library, plan=plan),
-                    output_path=trial_docx, include_finbot=plan.keep_finbot, role_bullet_limits=library.role_limits(),
-                )
-                export_docx_to_pdf(trial_docx, trial_pdf)
-                overflow = inspect_resume_pdf_layout(trial_pdf).has_overflow
-            except Exception as exc:
-                changes.append(f"Deferred reserve {reserve.bullet_id}: layout trial failed ({exc}); retained the last valid two-page draft.")
-                LOGGER.warning("Reserve layout trial failed; keeping the last valid draft: %s", exc)
-                break
-            if overflow:
-                changes.append(f"Deferred reserve {reserve.bullet_id}: would exceed the two-page limit.")
-                continue
-            publish_pair(source_docx=trial_docx, source_pdf=trial_pdf, docx=docx_path,
-                         pdf=pdf_path, archive=Path(temp))
-            selection = candidate
-            changes.append(f"Added reserve {reserve.bullet_id} within two pages: {reserve.rationale}")
-    return selection
+    try:
+        space = estimate_resume_space(pdf_path, template)
+    except Exception as exc:
+        changes.append(f"Expansion skipped: could not estimate space ({exc}); retained the last valid two-page draft.")
+        LOGGER.warning("Could not estimate remaining space; retaining the valid draft: %s", exc)
+        return selection
+    if space.remaining_height_pt < MIN_EXPANSION_SPACE_PT:
+        message = f"Expansion skipped: {space.remaining_height_pt:.0f} pt of free body space is below the {MIN_EXPANSION_SPACE_PT:.0f} pt threshold."
+        changes.append(message)
+        LOGGER.info(message)
+        return selection
+
+    budget = space.remaining_height_pt - EXPANSION_SAFETY_PT
+    by_id = library.by_id()
+    reserves = {reserve.bullet_id: reserve for reserve in selection.reserve_bullets}
+    candidate = selection
+    added: list[str] = []
+    heights: dict[str, float] = {}
+    # Iterating over metadata is cheap; there are no per-bullet Word exports.
+    for reserve in selection.reserve_bullets:
+        bullet = by_id[reserve.bullet_id]
+        height = space.role_layouts[bullet.role_id].estimate_height(bullet.text)
+        if height > budget:
+            changes.append(f"Deferred reserve {reserve.bullet_id}: estimated {height:.0f} pt exceeds the remaining batch budget.")
+            continue
+        try:
+            expanded = add_reserve(candidate, reserve, library=library, plan=plan)
+        except RuntimeError as exc:
+            changes.append(f"Deferred reserve {reserve.bullet_id}: {exc}")
+            continue
+        candidate = expanded
+        added.append(reserve.bullet_id)
+        heights[reserve.bullet_id] = height
+        budget -= height
+    if not added:
+        LOGGER.info("No eligible reserve batch fits the measured space; keeping the current draft.")
+        return selection
+
+    def rebuild(keys: list[str]) -> Selection:
+        result = selection
+        for key in keys:
+            result = add_reserve(result, reserves[key], library=library, plan=plan)
+        return result
+
+    # Keep the existing DOCX/PDF untouched until a whole batch is verified. Expansion
+    # requires one Word export, with at most one additional trimmed-batch verification.
+    with tempfile.TemporaryDirectory(prefix="reserve-batch-", dir=docx_path.parent) as temp:
+        trial_docx, trial_pdf = Path(temp) / "batch.docx", Path(temp) / "batch.pdf"
+
+        def render_batch(value: Selection):
+            write_tailored_resume(
+                template=template, tailoring=assemble_resume(value, library=library, plan=plan),
+                output_path=trial_docx, include_finbot=plan.keep_finbot, role_bullet_limits=library.role_limits(),
+            )
+            export_docx_to_pdf(trial_docx, trial_pdf)
+            return inspect_resume_pdf_layout(trial_pdf)
+
+        LOGGER.info("Testing one reserve batch (%s bullets, %.0f pt available): %s", len(added), space.remaining_height_pt, ", ".join(added))
+        try:
+            layout = render_batch(candidate)
+            if layout.has_overflow:
+                overflow = estimate_resume_space(trial_pdf, template).overflow_height_pt + EXPANSION_SAFETY_PT
+                removed_height = 0.0
+                removed = []
+                while added and removed_height < overflow:
+                    key = added.pop()
+                    removed.append(key)
+                    removed_height += heights[key]
+                changes.append("Trimmed lowest-priority batch additions after overflow: " + ", ".join(removed))
+                if not added:
+                    changes.append("Reserve batch rejected: no additions remained after trimming; retained the original two-page draft.")
+                    LOGGER.info("Reserve batch rejected: trimming removed every addition; keeping the original two-page draft.")
+                    return selection
+                candidate = rebuild(added)
+                LOGGER.info("Reserve batch overflowed; verifying once after removing %s.", ", ".join(removed))
+                if render_batch(candidate).has_overflow:
+                    changes.append("Reserve batch still overflowed after one correction; retained the original two-page draft.")
+                    LOGGER.info("Reserve batch rejected after one correction; keeping the original two-page draft.")
+                    return selection
+        except Exception as exc:
+            changes.append(f"Reserve batch verification failed ({exc}); retained the last valid two-page draft.")
+            LOGGER.warning("Reserve batch verification failed; keeping the last valid draft: %s", exc)
+            return selection
+        publish_pair(source_docx=trial_docx, source_pdf=trial_pdf, docx=docx_path,
+                     pdf=pdf_path, archive=Path(temp))
+        changes.append("Added reserve batch within two pages: " + ", ".join(added))
+        LOGGER.info("Reserve batch kept within two pages: %s", ", ".join(added))
+        return candidate
 
 
 def publish_pair(*, source_docx: Path, source_pdf: Path, docx: Path, pdf: Path, archive: Path) -> None:
@@ -289,6 +353,7 @@ def run_approved_workflow(*, args, config: AppConfig) -> int:
                         candidate = render_and_fit(
                             selection=audited, library=library, plan=plan, template=template,
                             docx_path=archive / "candidate.docx", pdf_path=archive / "candidate.pdf", changes=layout_changes,
+                            allow_expansion=False,
                         )
                         _write_json(archive / "candidate.json", candidate.model_dump())
                         if same_content(candidate, initial):

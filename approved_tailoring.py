@@ -94,6 +94,11 @@ would be a second bullet from a project (including after higher-ranked reserves)
 empty string. Do not reserve filler or already selected IDs. Return an empty reserve list when no
 additional accomplishment would strengthen the application. Reserve IDs are NOT in priority_order
 until the layout fitter adds them. Audit reserves as carefully as the main selection.
+The initial layout fitter may add one estimated batch of reserves if substantial space remains;
+it does not render every reserve separately or attempt to fill every last line. After feedback,
+there is NO automatic reserve expansion: choose the complete final set yourself and return an empty
+reserve_bullets list. Preserve deliberate removals for clarity or redundancy rather than counting
+on page fitting to add them back. Some whitespace is acceptable.
 Write a concise summary of at most 45 words supported by the supplied evidence. summary_sources
 must cite bullet IDs, 'template' for fixed non-project template facts, or 'finbot' for project facts
 only if Finbot is kept. Do not invent skills, metrics, outcomes, scope, or years of experience.

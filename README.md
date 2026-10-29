@@ -24,13 +24,18 @@ For each standard CLI run, the tool:
 7. Fills the Word placeholders, retains or removes the complete Finbot block, and exports through Word.
 8. Checks the actual PDF against the hard two-page limit. Overflow removes the lowest-priority
    eligible approved bullet and re-renders until it fits or no valid reduction remains. It never
-   rewrites bullets, changes Skills or Finbot, shrinks fonts, or adds filler. Once the draft fits, it
-   tries the pre-reviewed reserves in rank order, adding only bullets that also fit within two pages.
-   Rejected trials preserve the last valid draft; shorter later reserves can still be tried.
+   rewrites bullets, changes Skills or Finbot, shrinks fonts, or adds filler. If at least 72 points
+   (one inch) of usable body space remain, it estimates one reserve batch from the template's font,
+   bullet indentation, line/paragraph spacing, and widths calibrated against the rendered PDF.
+   It leaves an 18-point safety allowance and renders the batch once. If the batch overflows, it
+   removes the lowest-priority additions together and verifies once more. If it still does not fit,
+   the original valid draft is retained. There are no per-reserve Word exports or repeated filling
+   rounds; some whitespace is acceptable.
 9. Evaluates the rendered PDF against the job description.
 10. When feedback exists, performs at most one targeted selection revision and an independent review
     of changed content, under the same locked decision and approved-library constraints.
 11. Renders and page-fits a changed candidate, evaluates its PDF once, and only then publishes it.
+    Automatic reserve expansion is disabled after feedback, preserving deliberate editorial cuts.
 12. Prints a concise tailoring summary and saves the final selections, provenance, decisions,
     initial/final reports, page-fitting changes, and content diff in diagnostics and a unique archive.
 
@@ -52,7 +57,9 @@ review. PDF matching adds one call. A changed feedback revision normally adds th
 independent review, and final PDF matching. A locally invalid selection (for example, feedback citing
 a removed bullet) receives at most one corrective call; a second failure retains the normal failure
 behavior. Invalid parsed selections and validation errors are archived in `validation_attempts.json`.
-Page fitting, including reserve trials, makes no API calls. No feedback means no
+Page fitting makes no API calls. Initial space filling requires at most two additional Word exports:
+one batch test and one optional trimmed-batch verification. Small gaps and ineligible batches
+require no extra exports. Feedback candidates are never automatically refilled. No feedback means no
 revision calls; unchanged proposals skip review, export, and final matching. There is no repeated
 revision loop and no automatic rejection solely because a numerical match score decreases.
 
@@ -198,7 +205,7 @@ The archive retains the immutable plan, approved-library snapshot, job descripti
 draft and reviewed selections, fitted initial DOCX/PDF and match report, feedback signals, proposal
 and audit when available, candidate files/report, and outcome. The main diagnostics describe the
 final selected IDs, their source files and project headings, initial and final reports, score change,
-page-fitting removals, reserve additions/deferrals, and actual initial-to-final content diff. Feedback decisions describe the
+page-fitting removals, reserve batch additions/deferrals, and actual initial-to-final content diff. Feedback decisions describe the
 proposal/audit; read the final PDF report for remaining gaps because fitting may remove selections.
 Candidate files replace the standard outputs only after export, page fitting, and final matching
 succeed. Both previous outputs are restored if publication fails partway through.

@@ -17,6 +17,7 @@ from config import AppConfig
 from docx_editor import write_tailored_resume
 from feedback_revision import collect_feedback_signals
 from resume_reader import ResumeText
+from resume_layout import BulletLayout, ResumeSpace
 from test_feedback_revision import make_report
 
 
@@ -63,13 +64,16 @@ class ApprovedWorkflowTests(unittest.TestCase):
         # Exercise the real DOCX editor; only Word and the API are mocked here.
         pdf.write_text("\n".join(p.text for p in Document(docx).paragraphs))
 
-    def services(self, *, responses=None, reports=None, layout=None):
+    def services(self, *, responses=None, reports=None, layout=None, space=None):
         stack = ExitStack()
         self.addCleanup(stack.close)
         self.decide = stack.enter_context(patch("approved_workflow.decide_finbot", return_value=self.plan))
         self.select = stack.enter_context(patch("approved_workflow.request_selection", side_effect=responses or [self.initial, self.initial, self.revised, self.revised]))
         self.exports = stack.enter_context(patch("approved_workflow.export_docx_to_pdf", side_effect=self.export))
         self.layout = stack.enter_context(patch("approved_workflow.inspect_resume_pdf_layout", side_effect=layout or (lambda _: SimpleNamespace(has_overflow=False, page_count=2))))
+        metrics = BulletLayout(11, 12.65, 5, 450, "tiro", 1)
+        default_space = ResumeSpace(180, 5, {role.role_id: metrics for role in self.initial.roles})
+        self.space = stack.enter_context(patch("approved_workflow.estimate_resume_space", return_value=space or default_space))
         reports = iter(reports or [self.report, make_report(weak=False)])
 
         def evaluate(**kwargs):
@@ -185,11 +189,11 @@ class ApprovedWorkflowTests(unittest.TestCase):
         self.assertIn("ADS-M3-01", output)
         self.assertIn("ADS-M4-01", output)
         self.assertEqual(self.select.call_count, 2)
-        self.assertEqual(self.exports.call_count, 3)
-        self.assertIn("Added reserve ADS-M4-01", self.diagnostics())
+        self.assertEqual(self.exports.call_count, 2)
+        self.assertIn("Added reserve batch within two pages: ADS-M3-01, ADS-M4-01", self.diagnostics())
         self.assertIn("SELECTED PROJECTS", self.pdf.read_text())
 
-    def test_overflowing_reserve_keeps_last_valid_files_and_tries_next(self):
+    def test_overflowing_batch_trims_lowest_priority_additions_and_verifies_once(self):
         self.args.skip_feedback_revision = True
         reserves = tuple(ReserveBullet(bullet_id=key, rationale="Relevant additional evidence.",
                          second_bullet_rationale="") for key in ("ADS-M3-01", "ADS-M4-01"))
@@ -198,9 +202,10 @@ class ApprovedWorkflowTests(unittest.TestCase):
             SimpleNamespace(has_overflow=True, page_count=3), SimpleNamespace(has_overflow=False, page_count=2)])
         result, output = self.run_workflow()
         self.assertEqual(result, 0)
-        self.assertNotIn("ADS-M3-01", output)
-        self.assertIn("ADS-M4-01", output)
-        self.assertIn("Deferred reserve ADS-M3-01", self.diagnostics())
+        self.assertIn("ADS-M3-01", output)
+        self.assertNotIn("ADS-M4-01", output)
+        self.assertIn("Trimmed lowest-priority batch additions after overflow: ADS-M4-01", self.diagnostics())
+        self.assertEqual(self.exports.call_count, 3)
         self.assertEqual(self.docx.read_bytes(), (self.archive() / "initial.docx").read_bytes())
 
     def test_optional_reserve_export_failure_retains_valid_draft(self):
@@ -223,6 +228,88 @@ class ApprovedWorkflowTests(unittest.TestCase):
         self.assertNotIn("ADS-M3-01", output)
         self.assertIn("retained the last valid two-page draft", self.diagnostics())
         self.assertEqual(self.docx.read_bytes(), (self.archive() / "initial.docx").read_bytes())
+
+    def test_small_gap_skips_reserve_exports(self):
+        self.args.skip_feedback_revision = True
+        reserve = ReserveBullet(bullet_id="ADS-M3-01", rationale="Additional evidence.", second_bullet_rationale="")
+        selection = self.initial.model_copy(update={"reserve_bullets": (reserve,)})
+        metrics = BulletLayout(11, 12.65, 5, 450, "tiro", 1)
+        space = ResumeSpace(35, 0, {role.role_id: metrics for role in selection.roles})
+        self.services(responses=[selection, selection], space=space)
+        result, output = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.exports.call_count, 1)
+        self.assertNotIn("ADS-M3-01", output)
+        self.assertIn("below the 72 pt threshold", self.diagnostics())
+
+    def test_batch_still_overflowing_after_one_correction_keeps_original(self):
+        self.args.skip_feedback_revision = True
+        reserves = tuple(ReserveBullet(bullet_id=key, rationale="Additional evidence.", second_bullet_rationale="")
+                         for key in ("ADS-M3-01", "ADS-M4-01"))
+        selection = self.initial.model_copy(update={"reserve_bullets": reserves})
+        self.services(responses=[selection, selection], layout=[SimpleNamespace(has_overflow=False, page_count=2),
+            SimpleNamespace(has_overflow=True, page_count=3), SimpleNamespace(has_overflow=True, page_count=3)])
+        result, output = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertNotIn("ADS-M3-01", output)
+        self.assertNotIn("ADS-M4-01", output)
+        self.assertEqual(self.exports.call_count, 3)
+        self.assertIn("still overflowed after one correction", self.diagnostics())
+
+    def test_overflow_that_removes_entire_batch_needs_no_reexport_of_original(self):
+        self.args.skip_feedback_revision = True
+        reserve = ReserveBullet(bullet_id="ADS-M3-01", rationale="Additional evidence.", second_bullet_rationale="")
+        selection = self.initial.model_copy(update={"reserve_bullets": (reserve,)})
+        self.services(responses=[selection, selection], layout=[SimpleNamespace(has_overflow=False, page_count=2),
+                                                               SimpleNamespace(has_overflow=True, page_count=3)])
+        result, output = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.exports.call_count, 2)
+        self.assertNotIn("ADS-M3-01", output)
+        self.assertIn("no additions remained after trimming", self.diagnostics())
+
+    def test_estimated_batch_too_large_is_skipped_without_word_trial(self):
+        self.args.skip_feedback_revision = True
+        reserve = ReserveBullet(bullet_id="ADS-M3-01", rationale="Additional evidence.", second_bullet_rationale="")
+        selection = self.initial.model_copy(update={"reserve_bullets": (reserve,)})
+        narrow = BulletLayout(11, 12.65, 5, 60, "tiro", 1)
+        space = ResumeSpace(80, 0, {role.role_id: narrow for role in selection.roles})
+        self.services(responses=[selection, selection], space=space)
+        result, output = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.exports.call_count, 1)
+        self.assertNotIn("ADS-M3-01", output)
+        self.assertIn("exceeds the remaining batch budget", self.diagnostics())
+
+    def test_feedback_cuts_are_not_refilled_from_reserves(self):
+        reserve = ReserveBullet(bullet_id="ADS-M3-01", rationale="Additional evidence.", second_bullet_rationale="")
+        starting = self.initial.model_copy(update={"reserve_bullets": (reserve,)})
+        cut = self.initial.model_copy(update={
+            "summary": "Reliable " + self.initial.summary,
+            "reserve_bullets": (reserve,),
+            "feedback_decisions": tuple(FeedbackDecision(signal_id=s.signal_id, status="addressed",
+                rationale="Reduced redundant coverage for readability.", evidence_refs=("ADS-M0-01",)) for s in self.signals),
+        })
+        self.services(responses=[starting, starting, cut, cut])
+        result, output = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertIn("Status: revised", self.diagnostics())
+        self.assertNotIn("ADS-M3-01", output)
+        # Initial render + one expansion batch + final feedback render. No second expansion.
+        self.assertEqual(self.exports.call_count, 3)
+        self.assertEqual(self.space.call_count, 1)
+
+    def test_space_estimation_failure_preserves_valid_resume(self):
+        self.args.skip_feedback_revision = True
+        reserve = ReserveBullet(bullet_id="ADS-M3-01", rationale="Additional evidence.", second_bullet_rationale="")
+        selection = self.initial.model_copy(update={"reserve_bullets": (reserve,)})
+        self.services(responses=[selection, selection])
+        self.space.side_effect = ValueError("Unreadable layout estimate")
+        result, output = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.exports.call_count, 1)
+        self.assertNotIn("ADS-M3-01", output)
+        self.assertIn("could not estimate space", self.diagnostics())
 
     def test_feedback_failures_keep_initial_outputs_and_nonzero_status(self):
         self.services(reports=[self.report, RuntimeError("Final match unavailable")])
