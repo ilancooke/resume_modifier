@@ -25,7 +25,7 @@ def make_inputs(root: Path):
     ds += "\n## MLOps and Operational Excellence\n- **ADS-OPS-01:** Maintained production model pipelines and automated monitoring across a portfolio of independently deployed Python services.\n"
     ds += "- **ADS-OPS-02:** Standardized incident response and safe manual rollback for production model deployments across data science teams.\n"
     paths[0].write_text(ds)
-    paths[1].write_text("# Amazon BA/BIE\n\n## Reporting\n- **ABA-BA-01:** Automated executive reporting with SQL.\n")
+    paths[1].write_text("# Amazon BA/BIE\n\n## Reporting\n- **ABA-BA-01:** Automated executive reporting with SQL.\n\n## Enforcement Analytics\n- **ABA-BA-02:** Analyzed enforcement outcomes to improve investigation workflows.\n\n## Data Quality\n- **ABA-BA-03:** Improved data quality checks for recurring operational metrics.\n")
     paths[2].write_text("# PetSmart\n\n## Manager, Business Analytics\n- **PM-01:** Evaluated marketing campaigns using holdout groups.\n\n## Customer Insights Analyst\n- **PC-01:** Automated recurring brand reporting with PL/SQL.\n")
     document = Document()
     for text in (
@@ -53,7 +53,7 @@ def make_plan(keep=True):
 
 
 def make_selection(ds_count=3):
-    groups = (tuple(f"ADS-M{i}-01" for i in range(ds_count)), ("ABA-BA-01",), ("PM-01", "PC-01"))
+    groups = (tuple(f"ADS-M{i}-01" for i in range(ds_count)), ("ABA-BA-01", "ABA-BA-02"), ("PM-01", "PC-01"))
     return Selection(
         summary="Data scientist building production risk models and reliable Python workflows.",
         summary_sources=("ADS-M0-01",), roles=tuple(RoleSelection(role_id=role, bullet_ids=ids) for role, ids in zip(ROLE_IDS, groups)),

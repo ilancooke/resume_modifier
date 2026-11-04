@@ -66,8 +66,36 @@ class ApprovedTailoringTests(unittest.TestCase):
 
     def test_cross_project_group_can_supply_distinct_bullets(self):
         role = self.selection.roles[0].model_copy(update={"bullet_ids": ("ADS-OPS-01", "ADS-OPS-02")})
-        selection = self.selection.model_copy(update={"roles": (role, *self.selection.roles[1:]), "priority_order": ("ADS-OPS-01", "ADS-OPS-02", "ABA-BA-01", "PM-01", "PC-01")})
+        selection = self.selection.model_copy(update={"roles": (role, *self.selection.roles[1:]), "priority_order": ("ADS-OPS-01", "ADS-OPS-02", "ABA-BA-01", "ABA-BA-02", "PM-01", "PC-01")})
         self.validate(selection)
+
+    def test_ba_bie_requires_exactly_two_bullets_with_or_without_finbot(self):
+        for keep_finbot in (True, False):
+            plan = make_plan(keep_finbot)
+            validate_selection(self.selection, library=self.library, plan=plan)
+            for ids in ((), ("ABA-BA-01",), ("ABA-BA-01", "ABA-BA-02", "ABA-BA-03")):
+                roles = tuple(role.model_copy(update={"bullet_ids": ids})
+                              if role.role_id == "amazon_ba_bie" else role
+                              for role in self.selection.roles)
+                selection = self.selection.model_copy(update={
+                    "roles": roles, "priority_order": tuple(key for role in roles for key in role.bullet_ids),
+                })
+                with self.subTest(keep_finbot=keep_finbot, ids=ids), self.assertRaisesRegex(
+                    ResumeTailoringError, "exactly two bullets for amazon_ba_bie"
+                ):
+                    validate_selection(selection, library=self.library, plan=plan)
+
+    def test_page_fitting_preserves_both_ba_bie_bullets_even_at_lowest_priority(self):
+        ba_ids = self.selection.roles[1].bullet_ids
+        selection = self.selection.model_copy(update={
+            "priority_order": tuple(key for key in self.selection.priority_order if key not in ba_ids) + ba_ids,
+        })
+        for keep_finbot in (True, False):
+            with self.subTest(keep_finbot=keep_finbot):
+                candidate = drop_lowest_priority(selection, library=self.library, plan=make_plan(keep_finbot))
+                self.assertEqual(candidate.roles[1].bullet_ids, ba_ids)
+                self.assertNotIn("PC-01", candidate.priority_order)
+                self.assertEqual(len(candidate.priority_order), len(selection.priority_order) - 1)
 
     def test_removing_finbot_can_allow_more_than_eight_ds_bullets(self):
         validate_selection(make_selection(10), library=self.library, plan=make_plan(False))

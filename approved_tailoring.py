@@ -81,12 +81,14 @@ with a project_exceptions entry keyed by the exact project value in the library 
 Never select more than two from an individual project. cross_project=true groups may supply several
 distinct accomplishments. Avoid redundancy across groups and positions. Prioritize the strongest,
 most relevant recent evidence and business impact rather than keyword matching.
-Give Amazon Data Scientist the most space; earlier roles preserve progression concisely. BA/BIE
-allows at most two bullets, PetSmart at most four. When Finbot is kept, start around 6-7 DS bullets,
-1 BA/BIE and 2 PetSmart bullets. When removed, use the additional space for roughly 9-11 DS bullets,
-1 BA/BIE and 2 PetSmart bullets if those accomplishments strengthen the application. These are soft
-budgets, never quotas; use fewer when appropriate. Actual Word PDF pagination governs the limit.
-The starting counts are NOT ceilings. Also return up to ten ranked reserve_bullets: further
+Give Amazon Data Scientist the most space; earlier roles preserve progression concisely. Select
+exactly two BA/BIE bullets in every selection and review, whether Finbot is kept or removed.
+Both BA/BIE bullets must remain selected after feedback and page fitting. PetSmart allows at most
+four bullets. When Finbot is kept, start around 6-7 DS and 2 PetSmart bullets. When removed, use the
+additional space for roughly 9-11 DS and 2 PetSmart bullets if those accomplishments strengthen the
+application. The DS and PetSmart starting counts are soft budgets, never quotas; use fewer when
+appropriate. Actual Word PDF pagination governs the limit while preserving the two BA/BIE bullets.
+The DS and PetSmart starting counts are NOT ceilings. Also return up to ten ranked reserve_bullets: further
 nonredundant approved accomplishments that would strengthen this application if the rendered resume
 has space. Prioritize recent relevant work and coverage of important requirements. Each reserve has
 its ID and a concrete relevance rationale; second_bullet_rationale explains the distinct value if it
@@ -102,7 +104,8 @@ on page fitting to add them back. Some whitespace is acceptable.
 Write a concise summary of at most 45 words supported by the supplied evidence. summary_sources
 must cite bullet IDs, 'template' for fixed non-project template facts, or 'finbot' for project facts
 only if Finbot is kept. Do not invent skills, metrics, outcomes, scope, or years of experience.
-Keep the same three role blocks, including empty blocks if no relevant bullet exists. Order bullets
+Keep the same three role blocks, including empty DS or PetSmart blocks if no relevant bullet exists.
+The BA/BIE block must contain exactly two approved bullets. Order bullets
 for a coherent narrative. priority_order must contain every selected ID exactly once, strongest
 first, to support conservative page fitting. Report important unsupported requirements honestly.
 On an initial selection feedback_decisions must be empty. With feedback, provide exactly one
@@ -206,6 +209,8 @@ def validate_selection(selection: Selection, *, library: BulletLibrary, plan: Lo
     limits = library.role_limits()
     role_words = {}
     for role in selection.roles:
+        if role.role_id == "amazon_ba_bie" and len(role.bullet_ids) != 2:
+            raise ResumeTailoringError("Select exactly two bullets for amazon_ba_bie.")
         if len(role.bullet_ids) > limits[role.role_id]:
             raise ResumeTailoringError(f"Too many bullets for {role.role_id}.")
         if any(by_id[key].role_id != role.role_id for key in role.bullet_ids):

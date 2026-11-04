@@ -14,7 +14,7 @@ class BulletLibraryTests(unittest.TestCase):
         self.library, _ = make_inputs(self.root)
 
     def test_reads_ids_exact_text_roles_and_cross_project_metadata(self):
-        self.assertEqual(len(self.library.bullets), 16)
+        self.assertEqual(len(self.library.bullets), 18)
         bullet = self.library.by_id()["PC-01"]
         self.assertEqual(bullet.text, "Automated recurring brand reporting with PL/SQL.")
         self.assertEqual(bullet.role_id, "petsmart_analytics")

@@ -48,8 +48,9 @@ Amazon Data Scientist receives the most experience space. With Finbot kept, init
 about 6–7 Data Scientist bullets; with it removed, about 9–11 when the additional accomplishments
 strengthen the application. These are starting budgets; additional relevant reserves can be admitted
 when the rendered layout has room. There is no fixed eight-bullet Data Scientist ceiling.
-BA/BIE allows at most two bullets and the shared PetSmart section at most four. These are limits,
-not quotas; final selection depends on relevance and actual pagination. Approved text is never
+BA/BIE requires exactly two approved bullets, preserved through review, feedback, and page fitting.
+The shared PetSmart section allows at most four bullets; this is a limit, not a quota. Other bullet
+counts depend on relevance and actual pagination. Approved text is never
 rewritten to meet a word target.
 
 The initial content stages use three model calls: Finbot relevance, selection/summary, and independent
