@@ -38,6 +38,11 @@ class ApprovedTailoringTests(unittest.TestCase):
         with self.assertRaisesRegex(ResumeTailoringError, "summary evidence"):
             validate_selection(selection, library=self.library, plan=make_plan(False))
 
+    def test_summary_accepts_55_words_and_rejects_56(self):
+        self.validate(self.selection.model_copy(update={"summary": " ".join(["word"] * 55)}))
+        with self.assertRaisesRegex(ResumeTailoringError, "Summary exceeds 55 words"):
+            self.validate(self.selection.model_copy(update={"summary": " ".join(["word"] * 56)}))
+
     def test_plan_is_immutable_and_later_schema_has_no_finbot_field(self):
         with self.assertRaises(ValidationError):
             self.plan.keep_finbot = False

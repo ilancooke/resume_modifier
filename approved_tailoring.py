@@ -101,10 +101,16 @@ it does not render every reserve separately or attempt to fill every last line. 
 there is NO automatic reserve expansion: choose the complete final set yourself and return an empty
 reserve_bullets list. Preserve deliberate removals for clarity or redundancy rather than counting
 on page fitting to add them back. Some whitespace is acceptable.
-Write a concise summary of at most 45 words supported by the supplied evidence. summary_sources
-must cite bullet IDs, 'template' for fixed non-project template facts, or 'finbot' for project facts
-only if Finbot is kept. Do not invent skills, metrics, outcomes, scope, or years of experience.
-Keep the same three role blocks, including empty DS or PetSmart blocks if no relevant bullet exists.
+Write a compelling, role-tailored professional summary of at most 55 words that positions the candidate rather than merely recapping selected accomplishments.
+
+Establish the candidate's professional identity, seniority, and most relevant strengths. Build a coherent narrative around the value the candidate brings to this specific role, emphasizing ownership, business impact, technical depth, or analytical judgment as appropriate to the job description.
+
+Synthesize patterns across the candidate's experience rather than listing projects, tasks, tools, or isolated achievements. Prefer strong, specific language over generic phrases such as "experienced in," "worked with," or "uses Python and SQL." Avoid repeating metrics or details already prominent in the accomplishment bullets unless they are essential to positioning.
+
+Use the job description to determine which strengths to emphasize, but do not imply experience in domains, technologies, or responsibilities that the evidence does not support. Preserve individual versus team attribution.
+Favor concrete descriptions of demonstrated strengths and outcomes over abstract descriptions of analytical processes. Build a coherent professional value proposition rather than combining unrelated experience areas to demonstrate relevance. Emphasize the ability to drive measurable results, not simply perform analysis or communicate findings.
+Every factual claim must be supported by supplied evidence. summary_sources must cite bullet IDs, 'template' for fixed non-project template facts, or 'finbot' for project facts only if Finbot is kept. Do not invent skills, metrics, outcomes, scope, seniority, or years of experience.
+
 The BA/BIE block must contain exactly two approved bullets. Order bullets
 for a coherent narrative. priority_order must contain every selected ID exactly once, strongest
 first, to support conservative page fitting. Report important unsupported requirements honestly.
@@ -225,8 +231,8 @@ def validate_selection(selection: Selection, *, library: BulletLibrary, plan: Lo
     needed = {project for project, count in groups.items() if count == 2}
     if any(count > 2 for count in groups.values()) or set(exceptions) != needed:
         raise ResumeTailoringError("Select at most two bullets per project and justify each second bullet.")
-    if count_words(selection.summary) > 45:
-        raise ResumeTailoringError("Summary exceeds 45 words.")
+    if count_words(selection.summary) > 55:
+        raise ResumeTailoringError("Summary exceeds 55 words.")
     allowed_refs = set(by_id) | {"template"} | ({"finbot"} if plan.keep_finbot else set())
     if set(selection.summary_sources) - allowed_refs:
         raise ResumeTailoringError("Unknown or excluded summary evidence.")

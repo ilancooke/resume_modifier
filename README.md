@@ -15,7 +15,8 @@ For each standard CLI run, the tool:
 3. **Locks the Finbot decision for the entire run.** Later selection, review, page fitting, and
    feedback cannot reverse it, reduce the section, or edit its wording. A new run makes a new decision.
 4. Selects approved experience bullet IDs, ranks up to ten further relevant reserve bullets, and
-   writes a supported summary of at most 45 words.
+   writes an evidence-supported, role-tailored professional summary of at most 55 words that
+   positions the candidate's identity, seniority, strengths, and value for the role.
 5. Independently reviews the selection, summary factuality, relevance, redundancy, and project
    exceptions against the complete approved library and fixed template evidence.
 6. Locally validates the IDs, correct role attribution, project limits, and evidence references.
