@@ -289,6 +289,7 @@ def generate_one(
     artifact_dir: Path,
 ) -> None:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    (artifact_dir / "job_description.txt").write_text(job_description, encoding="utf-8")
     trace = generate_for_treatment(
         treatment=treatment,
         career_history_context=career_history.model_context(),

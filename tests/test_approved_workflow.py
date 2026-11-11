@@ -53,6 +53,10 @@ class ApprovedWorkflowTests(unittest.TestCase):
     def pdf(self):
         return self.docx.with_suffix(".pdf")
 
+    @property
+    def job_description_output(self):
+        return self.docx.with_suffix(".job_description.txt")
+
     def diagnostics(self):
         return next(self.config.resume_diagnostics_dir.glob("*.diagnostics.txt")).read_text()
 
@@ -108,6 +112,19 @@ class ApprovedWorkflowTests(unittest.TestCase):
         self.assertIn("production model pipelines", self.pdf.read_text())
         self.assertIn("SELECTED PROJECTS", self.pdf.read_text())
         self.assertEqual(self.docx.read_bytes(), (self.archive() / "candidate.docx").read_bytes())
+        self.assertEqual(self.job_description_output.read_bytes(), self.job.read_bytes())
+        self.assertIn(f"Job description: {self.job_description_output}", output)
+
+    def test_saves_overridden_job_description_without_trimming(self):
+        override = self.root / "override.txt"
+        override.write_text("\n  Build Python models — AI evaluation.\n\n", encoding="utf-8")
+        self.args.jd = str(override)
+        self.args.skip_feedback_revision = True
+        self.services()
+        result, _ = self.run_workflow()
+        self.assertEqual(result, 0)
+        self.assertEqual(self.job_description_output.read_bytes(), override.read_bytes())
+        self.assertEqual(self.decide.call_args.kwargs["job_description"], override.read_text().strip())
 
     def test_removed_finbot_stays_removed_during_feedback_and_allows_extra_ds_bullets(self):
         self.plan = make_plan(False)
@@ -166,6 +183,7 @@ class ApprovedWorkflowTests(unittest.TestCase):
                 self.assertEqual(result, 0)
                 self.assertEqual(self.select.call_count, 2)
                 self.assertEqual(self.match.call_count, 1)
+                self.assertEqual(self.job_description_output.read_bytes(), self.job.read_bytes())
 
     def test_page_fitting_removes_approved_bullets_and_preserves_locked_content(self):
         self.args.skip_feedback_revision = True
@@ -327,6 +345,7 @@ class ApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertTrue(self.docx.exists())
         self.assertTrue(self.pdf.exists())
+        self.assertEqual(self.job_description_output.read_bytes(), self.job.read_bytes())
         self.assertIn("Initial match unavailable", self.diagnostics())
 
     def test_score_decline_does_not_trigger_extra_calls_or_discard_valid_revision(self):
@@ -363,6 +382,7 @@ class ApprovedWorkflowTests(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertFalse(self.docx.exists())
         self.assertFalse(self.pdf.exists())
+        self.assertFalse(self.job_description_output.exists())
         self.assertIn("No resume was published", output)
         self.assertFalse(json.loads((self.archive() / "outcome.json").read_text())["outputs_published"])
         self.assertLessEqual(self.exports.call_count, len(self.initial.priority_order) + 1)
@@ -389,6 +409,30 @@ class ApprovedWorkflowTests(unittest.TestCase):
                 publish_pair(source_docx=source_docx, source_pdf=source_pdf, docx=target_docx, pdf=target_pdf, archive=self.root)
         self.assertEqual(target_docx.read_bytes(), b"old docx")
         self.assertEqual(target_pdf.read_bytes(), b"old pdf")
+
+    def test_job_description_publication_failure_restores_previous_outputs(self):
+        sources, destinations = [], []
+        for suffix in ("docx", "pdf", "job_description.txt"):
+            source = self.root / f"new.{suffix}"
+            destination = self.root / f"old.{suffix}"
+            source.write_text(f"new {suffix}")
+            destination.write_text(f"old {suffix}")
+            sources.append(source)
+            destinations.append(destination)
+        from feedback_revision import _atomic_copy
+
+        def copy(source, destination):
+            if source == sources[2]:
+                raise OSError("Cannot publish job description")
+            _atomic_copy(source, destination)
+
+        with patch("approved_workflow._atomic_copy", side_effect=copy):
+            with self.assertRaisesRegex(OSError, "Cannot publish job description"):
+                publish_pair(source_docx=sources[0], source_pdf=sources[1],
+                             docx=destinations[0], pdf=destinations[1], archive=self.root,
+                             additional_files=((sources[2], destinations[2]),))
+        for destination in destinations:
+            self.assertEqual(destination.read_text(), f"old {destination.name.removeprefix('old.')}")
 
 
 if __name__ == "__main__":

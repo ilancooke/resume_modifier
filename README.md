@@ -187,7 +187,11 @@ The company and job ID are extracted from the job description:
 ```text
 <tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.docx
 <tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.pdf
+<tailored_resumes_dir>/<company>/<candidate>_<company>_<job_id>.job_description.txt
 ```
+
+The job-description file contains the input posting for that resume. Rerunning the same role
+updates it together with the resume outputs.
 
 Each completed run also writes its evidence-attribution, optional diff, and tailored-match report to:
 
@@ -210,7 +214,7 @@ final selected IDs, their source files and project headings, initial and final r
 page-fitting removals, reserve batch additions/deferrals, and actual initial-to-final content diff. Feedback decisions describe the
 proposal/audit; read the final PDF report for remaining gaps because fitting may remove selections.
 Candidate files replace the standard outputs only after export, page fitting, and final matching
-succeed. Both previous outputs are restored if publication fails partway through.
+succeed. Previous outputs, including the job description, are restored if publication fails partway through.
 
 Standalone matching and experiment treatments retain their existing behavior. Experiments still
 measure narrative generation treatments; they do not invoke this approved-selection workflow or
@@ -356,6 +360,8 @@ text, normalized token usage, request latency, estimated list-price cost, raw ju
 and job-level JSON and Markdown summaries. When `absolute_scoring` is enabled, each resume is scored
 independently before the secondary pairwise comparison. This avoids making an order-sensitive
 pairwise vote the primary measurement.
+
+Each generated resume folder also contains `job_description.txt` with the posting used for that resume.
 
 ### OpenAI versus Anthropic pilot
 

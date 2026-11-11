@@ -183,10 +183,11 @@ def _fill_available_space(*, selection: Selection, library: BulletLibrary, plan:
         return candidate
 
 
-def publish_pair(*, source_docx: Path, source_pdf: Path, docx: Path, pdf: Path, archive: Path) -> None:
-    """Restore both previous files if publication fails after replacing either one."""
-    destinations = (docx, pdf)
-    sources = (source_docx, source_pdf)
+def publish_pair(*, source_docx: Path, source_pdf: Path, docx: Path, pdf: Path, archive: Path,
+                 additional_files: tuple[tuple[Path, Path], ...] = ()) -> None:
+    """Publish a resume and companion files, restoring previous files on failure."""
+    destinations = (docx, pdf, *(destination for _, destination in additional_files))
+    sources = (source_docx, source_pdf, *(source for source, _ in additional_files))
     backups: list[Path | None] = []
     for index, destination in enumerate(destinations):
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -225,7 +226,8 @@ def run_approved_workflow(*, args, config: AppConfig) -> int:
         raise ValueError("Configure bullet_library_dir or supply --bullet-library.")
     template = load_resume_template(args.resume or config.resume_template_path)
     library = load_bullet_library(library_path)
-    job_description = Path(args.jd or config.job_description_path).expanduser().read_text(encoding="utf-8").strip()
+    job_description_source = Path(args.jd or config.job_description_path).expanduser().read_text(encoding="utf-8")
+    job_description = job_description_source.strip()
     if not job_description:
         raise ValueError("Job description file is empty.")
 
@@ -245,12 +247,14 @@ def run_approved_workflow(*, args, config: AppConfig) -> int:
 
     metadata = RoleMetadata(slugify(extract_candidate_name(template)), slugify(plan.company_name), slugify(plan.job_id))
     docx, pdf = derive_output_paths(base_dir=config.tailored_resumes_dir, metadata=metadata)
+    job_description_output = docx.with_suffix(".job_description.txt")
     diagnostics = derive_diagnostics_path(base_dir=config.resume_diagnostics_dir, metadata=metadata)
     if docx.resolve() == template.path:
         raise ValueError("Refusing to overwrite the source resume template.")
     archive_root = diagnostics.parent / f"{diagnostics.stem}.selection_runs"
     archive_root.mkdir(parents=True, exist_ok=True)
     archive = Path(tempfile.mkdtemp(prefix=datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ_"), dir=archive_root))
+    (archive / "job_description.txt").write_text(job_description_source, encoding="utf-8")
     _write_json(archive / "locked_plan.json", plan.model_dump())
     _write_json(archive / "library.json", json.loads(library.model_context()))
     _write_json(archive / "inputs.json", {
@@ -272,7 +276,8 @@ def run_approved_workflow(*, args, config: AppConfig) -> int:
 
     def save_diagnostics() -> None:
         lines = [format_tailoring_summary(plan, selected), "", f"Status: {status}",
-                 f"Model: {args.model}", f"Run archive: {archive}", f"DOCX: {docx}", f"PDF: {pdf}"]
+                 f"Model: {args.model}", f"Run archive: {archive}", f"DOCX: {docx}", f"PDF: {pdf}",
+                 f"Job description: {job_description_output}"]
         lines.append("\nApproved bullet provenance:")
         by_id = library.by_id()
         for role in selected.roles:
@@ -314,7 +319,8 @@ def run_approved_workflow(*, args, config: AppConfig) -> int:
                                   docx_path=archive / "initial.docx", pdf_path=archive / "initial.pdf", changes=layout_changes)
         initial = selected
         _write_json(archive / "initial.json", initial.model_dump())
-        publish_pair(source_docx=archive / "initial.docx", source_pdf=archive / "initial.pdf", docx=docx, pdf=pdf, archive=archive)
+        publish_pair(source_docx=archive / "initial.docx", source_pdf=archive / "initial.pdf", docx=docx, pdf=pdf, archive=archive,
+                     additional_files=((archive / "job_description.txt", job_description_output),))
         outputs_published = True
         status = "initial_match"
         initial_text, initial_report = validate_resume(resume_path=pdf, job_description=job_description, model=args.model)
@@ -382,7 +388,7 @@ def run_approved_workflow(*, args, config: AppConfig) -> int:
 
     if outputs_published:
         print(format_tailoring_summary(plan, selected))
-        print(f"DOCX: {docx}\nPDF: {pdf}\nDiagnostics: {diagnostics}")
+        print(f"DOCX: {docx}\nPDF: {pdf}\nJob description: {job_description_output}\nDiagnostics: {diagnostics}")
     else:
         print(f"No resume was published. Diagnostics: {diagnostics}")
     return 1 if error else 0
